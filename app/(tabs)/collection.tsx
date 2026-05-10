@@ -67,11 +67,20 @@ export default function CollectionScreen() {
       ListHeaderComponent={
         <>
           <View style={styles.header}>
-            <Text style={styles.eyebrow}>{cards.length} cards · 7 sets</Text>
-            <Text style={styles.title}>
-              Your{' '}
-              <Text style={styles.titleAccent}>collection</Text>
-            </Text>
+            <View style={styles.headerText}>
+              <Text style={styles.eyebrow}>{cards.length} cards · 7 sets</Text>
+              <Text style={styles.title}>
+                Your{' '}
+                <Text style={styles.titleAccent}>collection</Text>
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.bindersBtn}
+              onPress={() => router.push('/(tabs)/binders')}
+              accessibilityLabel="Open binders"
+            >
+              <Icon name="binders" size={18} color={Colors.text} />
+            </TouchableOpacity>
           </View>
 
           <View style={styles.filterRow}>
@@ -106,7 +115,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
     marginBottom: 4,
+  },
+  headerText: {
+    flex: 1,
+  },
+  bindersBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    marginBottom: 6,
   },
   eyebrow: {
     fontFamily: FontFamily.mono,

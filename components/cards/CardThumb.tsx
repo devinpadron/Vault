@@ -15,9 +15,9 @@ export function CardThumb({ card, width, ratio = 1.4 }: Props) {
     <View style={[styles.container, { width, height, borderRadius: 8 }]}>
       <LinearGradient
         colors={card.art}
-        locations={[0, 0.45, 0.85]}
-        start={{ x: 0.15, y: 0 }}
-        end={{ x: 0.85, y: 1 }}
+        locations={[0, 0.5, 1]}
+        start={{ x: 0.2, y: 0 }}
+        end={{ x: 0.8, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
 

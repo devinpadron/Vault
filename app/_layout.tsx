@@ -34,6 +34,8 @@ export default function RootLayout() {
         <Stack.Screen name="card/[id]" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
         <Stack.Screen name="scanner" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
         <Stack.Screen name="search" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
+        <Stack.Screen name="binder/[id]" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="friend/[id]" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
       </Stack>
       <StatusBar style="light" />
     </GestureHandlerRootView>

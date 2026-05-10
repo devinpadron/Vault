@@ -2,6 +2,7 @@ import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-nati
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Card3D } from '@/components/cards/Card3D';
 import { Sparkline } from '@/components/charts/Sparkline';
 import { Icon } from '@/components/ui/Icon';
@@ -27,7 +28,7 @@ export default function HomeScreen() {
       showsVerticalScrollIndicator={false}
     >
       {/* Top bar */}
-      <View style={styles.topBar}>
+      <Animated.View entering={FadeInDown.delay(0).duration(340)} style={styles.topBar}>
         <View>
           <Text style={styles.eyebrow}>05 · 10 · SAT</Text>
           <Text style={styles.greeting}>
@@ -36,18 +37,27 @@ export default function HomeScreen() {
           </Text>
         </View>
         <View style={styles.topActions}>
-          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/search')}>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => router.push('/search')}
+            accessibilityLabel="Search cards"
+            accessibilityRole="button"
+          >
             <Icon name="search" size={18} color={Colors.text} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtnRelative}>
+          <TouchableOpacity
+            style={styles.iconBtnRelative}
+            accessibilityLabel="Notifications"
+            accessibilityRole="button"
+          >
             <Icon name="bell" size={18} color={Colors.text} />
             <View style={styles.badge} />
           </TouchableOpacity>
         </View>
-      </View>
+      </Animated.View>
 
       {/* Stats card */}
-      <View style={styles.statsCard}>
+      <Animated.View entering={FadeInDown.delay(80).duration(340)} style={styles.statsCard}>
         <Text style={styles.eyebrow}>Collection · Total</Text>
         <View style={styles.statsValue}>
           <Text style={styles.statsSymbol}>$</Text>
@@ -64,61 +74,62 @@ export default function HomeScreen() {
           <Text style={[styles.mono, { fontSize: 12, color: Colors.text2 }]}>{STATS.count} CARDS</Text>
         </View>
         <Sparkline data={MOCK_DATA.priceHistory} />
-      </View>
+      </Animated.View>
 
       {/* Featured card */}
-      <View style={styles.sectionHeader}>
-        <Text style={styles.eyebrow}>Featured · Card of the day</Text>
-        <Text style={[styles.mono, { fontSize: 10, color: Colors.gold, letterSpacing: 1.6 }]}>1/1</Text>
-      </View>
-
-      <View style={styles.featuredCard}>
-        <LinearGradient
-          colors={['rgba(122,107,255,0.18)', 'transparent']}
-          style={StyleSheet.absoluteFill}
-        />
-        {/* Aurora glow */}
-        <LinearGradient
-          colors={['rgba(255,215,0,0.07)', 'transparent']}
-          start={{ x: 0.3, y: 0 }}
-          end={{ x: 0.7, y: 0.4 }}
-          style={StyleSheet.absoluteFill}
-        />
-        <Card3D
-          card={featured}
-          width={200}
-          onPress={() => router.push(`/card/${featured.id}`)}
-        />
-        <View style={styles.featuredMeta}>
-          <Text style={styles.featuredName}>
-            {featured.name}{' '}
-            <Text style={styles.featuredVariant}>{featured.variant}</Text>
-          </Text>
-          <Text style={[styles.mono, { fontSize: 10, color: Colors.text2, marginTop: 6, letterSpacing: 1.6 }]}>
-            {featured.set} · {featured.no}
-          </Text>
+      <Animated.View entering={FadeInDown.delay(160).duration(340)}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.eyebrow}>Featured · Card of the day</Text>
+          <Text style={[styles.mono, { fontSize: 10, color: Colors.gold, letterSpacing: 1.6 }]}>1/1</Text>
         </View>
-        <View style={styles.chips}>
-          <View style={[styles.chip, styles.chipHolo]}>
-            <Text style={styles.chipHoloText}>RAINBOW</Text>
+        <View style={styles.featuredCard}>
+          <LinearGradient
+            colors={['rgba(122,107,255,0.18)', 'transparent']}
+            style={StyleSheet.absoluteFill}
+          />
+          <LinearGradient
+            colors={['rgba(255,215,0,0.07)', 'transparent']}
+            start={{ x: 0.3, y: 0 }}
+            end={{ x: 0.7, y: 0.4 }}
+            style={StyleSheet.absoluteFill}
+          />
+          <Card3D
+            card={featured}
+            width={200}
+            onPress={() => router.push(`/card/${featured.id}`)}
+          />
+          <View style={styles.featuredMeta}>
+            <Text style={styles.featuredName}>
+              {featured.name}{' '}
+              <Text style={styles.featuredVariant}>{featured.variant}</Text>
+            </Text>
+            <Text style={[styles.mono, { fontSize: 10, color: Colors.text2, marginTop: 6, letterSpacing: 1.6 }]}>
+              {featured.set} · {featured.no}
+            </Text>
           </View>
-          <View style={[styles.chip, styles.chipGold]}>
-            <Text style={styles.chipGoldText}>${fmt(featured.value)}</Text>
+          <View style={styles.chips}>
+            <View style={[styles.chip, styles.chipHolo]}>
+              <Text style={styles.chipHoloText}>RAINBOW</Text>
+            </View>
+            <View style={[styles.chip, styles.chipGold]}>
+              <Text style={styles.chipGoldText}>${fmt(featured.value)}</Text>
+            </View>
           </View>
         </View>
-      </View>
+      </Animated.View>
 
       {/* The Brief */}
-      <View style={[styles.sectionHeader, { marginTop: 28 }]}>
-        <Text style={styles.displayTitle}>The Brief</Text>
-        <Text style={[styles.mono, { fontSize: 10, color: Colors.text3, letterSpacing: 1.6 }]}>VIEW ALL →</Text>
-      </View>
-
-      <View style={styles.newsList}>
-        {MOCK_DATA.news.map((item) => (
-          <NewsRow key={item.id} item={item} />
-        ))}
-      </View>
+      <Animated.View entering={FadeInDown.delay(240).duration(340)}>
+        <View style={[styles.sectionHeader, { marginTop: 28 }]}>
+          <Text style={styles.displayTitle}>The Brief</Text>
+          <Text style={[styles.mono, { fontSize: 10, color: Colors.text3, letterSpacing: 1.6 }]}>VIEW ALL →</Text>
+        </View>
+        <View style={styles.newsList}>
+          {MOCK_DATA.news.map(item => (
+            <NewsRow key={item.id} item={item} />
+          ))}
+        </View>
+      </Animated.View>
     </ScrollView>
   );
 }

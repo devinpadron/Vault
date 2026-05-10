@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   Modal,
   ScrollView,
@@ -10,6 +10,13 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { Card3D } from '@/components/cards/Card3D';
 import { PriceChart } from '@/components/charts/PriceChart';
 import { Icon } from '@/components/ui/Icon';
@@ -28,6 +35,49 @@ export default function CardDetailScreen() {
   const [range, setRange] = useState<Range>('1M');
   const [binderSheetOpen, setBinderSheetOpen] = useState(false);
   const insets = useSafeAreaInsets();
+
+  const sheetY = useSharedValue(500);
+  const backdropOpacity = useSharedValue(0);
+  const panStartY = useSharedValue(0);
+
+  const openSheet = useCallback(() => {
+    sheetY.value = 500;
+    backdropOpacity.value = 0;
+    setBinderSheetOpen(true);
+  }, [sheetY, backdropOpacity]);
+
+  const closeSheet = useCallback(() => {
+    sheetY.value = withSpring(500, { damping: 22, stiffness: 180 });
+    backdropOpacity.value = withTiming(0, { duration: 220 });
+    setTimeout(() => setBinderSheetOpen(false), 270);
+  }, [sheetY, backdropOpacity]);
+
+  useEffect(() => {
+    if (binderSheetOpen) {
+      sheetY.value = withSpring(0, { damping: 22, stiffness: 200 });
+      backdropOpacity.value = withTiming(1, { duration: 250 });
+    }
+  }, [binderSheetOpen, sheetY, backdropOpacity]);
+
+  const sheetPan = Gesture.Pan()
+    .runOnJS(true)
+    .onBegin(() => { panStartY.value = sheetY.value; })
+    .onUpdate((e) => { sheetY.value = Math.max(0, panStartY.value + e.translationY); })
+    .onEnd((e) => {
+      if (sheetY.value > 100 || e.velocityY > 600) {
+        closeSheet();
+      } else {
+        sheetY.value = withSpring(0, { damping: 22, stiffness: 200 });
+      }
+    });
+
+  const sheetAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: sheetY.value }],
+  }));
+
+  const backdropAnimStyle = useAnimatedStyle(() => ({
+    opacity: backdropOpacity.value,
+  }));
 
   const card = MOCK_DATA.cards.find(c => c.id === id);
   if (!card) return null;
@@ -157,60 +207,76 @@ export default function CardDetailScreen() {
         <View style={styles.ctaRow}>
           <TouchableOpacity
             style={[styles.ctaPrimary, { flex: 1 }]}
-            onPress={() => setBinderSheetOpen(true)}
+            onPress={openSheet}
+            accessibilityLabel="Add card to binder"
+            accessibilityRole="button"
           >
             <Text style={styles.ctaPrimaryText}>Add to binder</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.ctaIcon}>
+          <TouchableOpacity
+            style={styles.ctaIcon}
+            accessibilityLabel="Trade card"
+            accessibilityRole="button"
+          >
             <Icon name="trade" size={16} color={Colors.text} />
           </TouchableOpacity>
         </View>
       </ScrollView>
 
-      {/* Add to Binder bottom sheet */}
+      {/* Add to Binder — gesture-dismissible bottom sheet */}
       <Modal
         visible={binderSheetOpen}
         transparent
-        animationType="slide"
-        onRequestClose={() => setBinderSheetOpen(false)}
+        animationType="none"
+        onRequestClose={closeSheet}
+        statusBarTranslucent
       >
-        <TouchableOpacity
-          style={styles.backdrop}
-          activeOpacity={1}
-          onPress={() => setBinderSheetOpen(false)}
-        />
-        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={styles.sheetGrabber} />
-          <Text style={styles.sheetEyebrow}>Add to binder</Text>
-          <Text style={styles.sheetTitle}>Choose a destination</Text>
+        {/* Animated backdrop */}
+        <Animated.View style={[styles.backdrop, backdropAnimStyle]}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeSheet} />
+        </Animated.View>
 
-          <View style={styles.sheetList}>
-            {MOCK_DATA.binders.map(b => (
+        {/* Gesture-driven sheet */}
+        <GestureDetector gesture={sheetPan}>
+          <Animated.View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }, sheetAnimStyle]}>
+            <View style={styles.sheetGrabber} />
+            <Text style={styles.sheetEyebrow}>Add to binder</Text>
+            <Text style={styles.sheetTitle}>Choose a destination</Text>
+
+            <View style={styles.sheetList}>
+              {MOCK_DATA.binders.map(b => (
+                <TouchableOpacity
+                  key={b.id}
+                  style={styles.binderRow}
+                  onPress={closeSheet}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Add to ${b.name}`}
+                >
+                  <LinearGradient
+                    colors={b.tone}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.binderThumb}
+                  />
+                  <View style={styles.binderInfo}>
+                    <Text style={styles.binderName}>{b.name}</Text>
+                    <Text style={styles.binderCount}>{b.count} CARDS</Text>
+                  </View>
+                  <Icon name="chevron-right" size={16} color={Colors.text3} />
+                </TouchableOpacity>
+              ))}
+
               <TouchableOpacity
-                key={b.id}
-                style={styles.binderRow}
-                onPress={() => setBinderSheetOpen(false)}
+                style={styles.newBinder}
+                accessibilityRole="button"
+                accessibilityLabel="Create new binder"
               >
-                <LinearGradient
-                  colors={b.tone}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.binderThumb}
-                />
-                <View style={styles.binderInfo}>
-                  <Text style={styles.binderName}>{b.name}</Text>
-                  <Text style={styles.binderCount}>{b.count} CARDS</Text>
-                </View>
-                <Icon name="chevron-right" size={16} color={Colors.text3} />
+                <Icon name="plus" size={14} color={Colors.text2} />
+                <Text style={styles.newBinderText}>New binder</Text>
               </TouchableOpacity>
-            ))}
-
-            <TouchableOpacity style={styles.newBinder}>
-              <Icon name="plus" size={14} color={Colors.text2} />
-              <Text style={styles.newBinderText}>New binder</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+            </View>
+          </Animated.View>
+        </GestureDetector>
       </Modal>
     </View>
   );
