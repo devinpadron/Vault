@@ -9,7 +9,8 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.devinpadron.Vault"
     },
     "android": {
       "adaptiveIcon": {
@@ -33,9 +34,9 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#0A0A0C",
           "dark": {
-            "backgroundColor": "#000000"
+            "backgroundColor": "#0A0A0C"
           }
         }
       ]
@@ -43,6 +44,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "17e11c01-aafd-4973-9f2b-f16efd7474c4"
+      }
+    },
+    "owner": "devinpadron"
   }
 }
