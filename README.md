@@ -1,8 +1,8 @@
-# PokeVault
+# Vault
 
 A dark, premium trading-card vault app built with Expo (React Native + TypeScript).
 
-The design reference is `../PokeVault.html` — a fully interactive hi-fi prototype showing all 9 screens with live animations and a 3D card-tilt effect. Every screen and component in this codebase is a direct translation of that prototype into native React Native.
+The design reference is `../Vault.html` — a fully interactive hi-fi prototype showing all 9 screens with live animations and a 3D card-tilt effect. Every screen and component in this codebase is a direct translation of that prototype into native React Native.
 
 ---
 
