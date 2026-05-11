@@ -15,6 +15,9 @@ export interface Card {
   creature: string;
   types: CardType[];
   artist: string;
+  imageUrl?: string;
+  hp?: number;
+  description?: string;
 }
 
 export interface Binder {
@@ -54,6 +57,14 @@ export interface NewsItem {
   title: string;
   art: [string, string, string];
   minutes: number;
+}
+
+export interface User {
+  id: string;
+  name: string;
+  handle: string;
+  email: string;
+  avatar: [string, string];
 }
 
 export type PriceHistory = number[];

@@ -5,14 +5,17 @@ import { router } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { CardThumb } from '@/components/cards/CardThumb';
 import { Icon } from '@/components/ui/Icon';
-import { MOCK_DATA } from '@/data/mock';
+import { ErrorPanel } from '@/components/ui/ErrorPanel';
+import { useBinders } from '@/lib/api/binders';
+import { useCards } from '@/lib/api/cards';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
-import { Binder } from '@/types';
-
-const totalCards = MOCK_DATA.binders.reduce((sum, b) => sum + b.count, 0);
+import { Binder, Card } from '@/types';
 
 export default function BindersScreen() {
   const insets = useSafeAreaInsets();
+  const { data: binders = [], isLoading, isError, refetch } = useBinders();
+  const { data: apiCards = [] } = useCards();
+  const totalCards = binders.reduce((sum, b) => sum + b.count, 0);
 
   return (
     <ScrollView
@@ -24,7 +27,7 @@ export default function BindersScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.eyebrow}>
-            {MOCK_DATA.binders.length} binders · {totalCards} cards
+            {binders.length} binders · {totalCards} cards
           </Text>
           <Text style={styles.title}>
             <Text style={styles.titleAccent}>Binders</Text>
@@ -35,16 +38,24 @@ export default function BindersScreen() {
         </TouchableOpacity>
       </View>
 
+      {isError && <ErrorPanel message="Failed to load binders" onRetry={refetch} />}
+
       {/* Binder cover cards */}
       <View style={styles.list}>
-        {MOCK_DATA.binders.map((binder, index) => (
-          <BinderCover
-            key={binder.id}
-            binder={binder}
-            index={index}
-            onPress={() => router.push(`/binder/${binder.id}`)}
-          />
-        ))}
+        {isLoading
+          ? Array.from({ length: 3 }).map((_, i) => (
+              <View key={i} style={[styles.cover, { backgroundColor: Colors.surface, opacity: 0.5 }]} />
+            ))
+          : binders.map((binder, index) => (
+              <BinderCover
+                key={binder.id}
+                binder={binder}
+                index={index}
+                previewCards={apiCards}
+                onPress={() => router.push(`/binder/${binder.id}`)}
+              />
+            ))
+        }
       </View>
     </ScrollView>
   );
@@ -53,14 +64,16 @@ export default function BindersScreen() {
 function BinderCover({
   binder,
   index,
+  previewCards,
   onPress,
 }: {
   binder: Binder;
   index: number;
+  previewCards: Card[];
   onPress: () => void;
 }) {
-  // Second card preview: offset so stacked thumbnails don't repeat the cover
-  const secondCard = MOCK_DATA.cards[(index * 2 + 3) % MOCK_DATA.cards.length];
+  const pool = previewCards.length > 0 ? previewCards : [binder.cover];
+  const secondCard = pool[(index * 2 + 3) % pool.length];
 
   return (
     <Animated.View entering={FadeInDown.delay(index * 60).duration(320)}>

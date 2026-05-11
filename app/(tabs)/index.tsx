@@ -4,9 +4,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Card3D } from '@/components/cards/Card3D';
+import { SkeletonCard } from '@/components/ui/SkeletonCard';
 import { Sparkline } from '@/components/charts/Sparkline';
 import { Icon } from '@/components/ui/Icon';
 import { MOCK_DATA } from '@/data/mock';
+import { useFeaturedCard } from '@/lib/api/cards';
+import { useNews } from '@/lib/api/news';
+import { useAuth } from '@/lib/auth/AuthContext';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
 import { NewsItem } from '@/types';
 
@@ -19,7 +23,17 @@ function fmt(n: number) {
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const featured = MOCK_DATA.cards[11]; // Drakorvex
+  const { data: featured, isLoading: featuredLoading } = useFeaturedCard();
+  const { data: news = [] } = useNews();
+  const { user } = useAuth();
+
+  const now = new Date();
+  const dateLabel = now
+    .toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', weekday: 'short' })
+    .toUpperCase();
+  const hour = now.getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
 
   return (
     <ScrollView
@@ -30,10 +44,10 @@ export default function HomeScreen() {
       {/* Top bar */}
       <Animated.View entering={FadeInDown.delay(0).duration(340)} style={styles.topBar}>
         <View>
-          <Text style={styles.eyebrow}>05 · 10 · SAT</Text>
+          <Text style={styles.eyebrow}>{dateLabel}</Text>
           <Text style={styles.greeting}>
-            Good morning,{'\n'}
-            <Text style={styles.greetingName}>Trainer</Text>
+            {greeting},{'\n'}
+            <Text style={styles.greetingName}>{user?.name ?? 'Trainer'}</Text>
           </Text>
         </View>
         <View style={styles.topActions}>
@@ -93,28 +107,34 @@ export default function HomeScreen() {
             end={{ x: 0.7, y: 0.4 }}
             style={StyleSheet.absoluteFill}
           />
-          <Card3D
-            card={featured}
-            width={200}
-            onPress={() => router.push(`/card/${featured.id}`)}
-          />
-          <View style={styles.featuredMeta}>
-            <Text style={styles.featuredName}>
-              {featured.name}{' '}
-              <Text style={styles.featuredVariant}>{featured.variant}</Text>
-            </Text>
-            <Text style={[styles.mono, { fontSize: 10, color: Colors.text2, marginTop: 6, letterSpacing: 1.6 }]}>
-              {featured.set} · {featured.no}
-            </Text>
-          </View>
-          <View style={styles.chips}>
-            <View style={[styles.chip, styles.chipHolo]}>
-              <Text style={styles.chipHoloText}>RAINBOW</Text>
-            </View>
-            <View style={[styles.chip, styles.chipGold]}>
-              <Text style={styles.chipGoldText}>${fmt(featured.value)}</Text>
-            </View>
-          </View>
+          {featuredLoading || !featured ? (
+            <SkeletonCard width={200} />
+          ) : (
+            <>
+              <Card3D
+                card={featured}
+                width={200}
+                onPress={() => router.push(`/card/${featured.id}`)}
+              />
+              <View style={styles.featuredMeta}>
+                <Text style={styles.featuredName}>
+                  {featured.name}{' '}
+                  <Text style={styles.featuredVariant}>{featured.variant}</Text>
+                </Text>
+                <Text style={[styles.mono, { fontSize: 10, color: Colors.text2, marginTop: 6, letterSpacing: 1.6 }]}>
+                  {featured.set} · {featured.no}
+                </Text>
+              </View>
+              <View style={styles.chips}>
+                <View style={[styles.chip, styles.chipHolo]}>
+                  <Text style={styles.chipHoloText}>{featured.rarity.toUpperCase()}</Text>
+                </View>
+                <View style={[styles.chip, styles.chipGold]}>
+                  <Text style={styles.chipGoldText}>${fmt(featured.value)}</Text>
+                </View>
+              </View>
+            </>
+          )}
         </View>
       </Animated.View>
 
@@ -125,7 +145,7 @@ export default function HomeScreen() {
           <Text style={[styles.mono, { fontSize: 10, color: Colors.text3, letterSpacing: 1.6 }]}>VIEW ALL →</Text>
         </View>
         <View style={styles.newsList}>
-          {MOCK_DATA.news.map(item => (
+          {news.map(item => (
             <NewsRow key={item.id} item={item} />
           ))}
         </View>

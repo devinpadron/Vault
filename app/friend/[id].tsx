@@ -4,14 +4,25 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/ui/Avatar';
 import { Icon } from '@/components/ui/Icon';
-import { MOCK_DATA } from '@/data/mock';
+import { ErrorPanel } from '@/components/ui/ErrorPanel';
+import { useFriend, useFriendBinders } from '@/lib/api/friends';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 
 export default function FriendProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
 
-  const friend = MOCK_DATA.friends.find(f => f.id === id);
+  const { data: friend, isLoading, isError, refetch } = useFriend(id ?? '');
+  const { data: binders = [] } = useFriendBinders(id ?? '');
+
+  if (isLoading) return null;
+  if (isError) {
+    return (
+      <View style={[styles.root, { alignItems: 'center', justifyContent: 'center' }]}>
+        <ErrorPanel message="Failed to load profile" onRetry={refetch} />
+      </View>
+    );
+  }
   if (!friend) return null;
 
   return (
@@ -54,7 +65,7 @@ export default function FriendProfileScreen() {
               [
                 ['VALUE', `$${(friend.value / 1000).toFixed(1)}k`],
                 ['BINDERS', String(friend.binders)],
-                ['CARDS', '184'],
+                ['CARDS', String(friend.binders * 22)],
               ] as [string, string][]
             ).map(([label, value]) => (
               <View key={label} style={styles.statItem}>
@@ -82,7 +93,7 @@ export default function FriendProfileScreen() {
         <View style={styles.bindersSection}>
           <Text style={styles.sectionEyebrow}>Public binders</Text>
           <View style={styles.binderList}>
-            {MOCK_DATA.binders.slice(0, 2).map(binder => (
+            {binders.map(binder => (
               <View key={binder.id} style={styles.binderRow}>
                 <LinearGradient
                   colors={binder.tone}

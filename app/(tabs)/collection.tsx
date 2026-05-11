@@ -4,9 +4,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Card3D } from '@/components/cards/Card3D';
+import { SkeletonCardCell } from '@/components/ui/SkeletonCard';
 import { FilterPills } from '@/components/ui/FilterPills';
 import { Icon } from '@/components/ui/Icon';
-import { MOCK_DATA } from '@/data/mock';
+import { useCards } from '@/lib/api/cards';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
 import { Card } from '@/types';
 
@@ -49,8 +50,9 @@ function CardCell({ card, index }: { card: Card; index: number }) {
 export default function CollectionScreen() {
   const [filter, setFilter] = useState('All');
   const insets = useSafeAreaInsets();
+  const { data: allCards = [], isLoading } = useCards();
 
-  const cards = MOCK_DATA.cards.filter(c => filter === 'Foil' ? c.foil : true);
+  const cards = allCards.filter((c: Card) => filter === 'Foil' ? c.foil : true);
 
   const pairs: [Card, Card | null][] = [];
   for (let i = 0; i < cards.length; i += 2) {
@@ -59,7 +61,7 @@ export default function CollectionScreen() {
 
   return (
     <FlatList
-      data={pairs}
+      data={isLoading ? [] : pairs}
       keyExtractor={(_, i) => String(i)}
       style={styles.screen}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + 16, paddingBottom: 100 }]}
@@ -68,7 +70,9 @@ export default function CollectionScreen() {
         <>
           <View style={styles.header}>
             <View style={styles.headerText}>
-              <Text style={styles.eyebrow}>{cards.length} cards · 7 sets</Text>
+              <Text style={styles.eyebrow}>
+                {isLoading ? 'Loading…' : `${cards.length} cards · ${new Set(cards.map(c => c.set)).size} sets`}
+              </Text>
               <Text style={styles.title}>
                 Your{' '}
                 <Text style={styles.titleAccent}>collection</Text>
@@ -90,6 +94,17 @@ export default function CollectionScreen() {
               <Text style={styles.sortLabel}>Sort</Text>
             </TouchableOpacity>
           </View>
+
+          {isLoading && (
+            <>
+              {Array.from({ length: 6 }, (_, i) => (
+                <View key={i} style={styles.row}>
+                  <SkeletonCardCell width={158} />
+                  <SkeletonCardCell width={158} />
+                </View>
+              ))}
+            </>
+          )}
         </>
       }
       renderItem={({ item: [left, right], index }) => (

@@ -1,5 +1,6 @@
 import { StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import { Card } from '@/types';
 
 interface Props {
@@ -13,6 +14,7 @@ export function CardThumb({ card, width, ratio = 1.4 }: Props) {
 
   return (
     <View style={[styles.container, { width, height, borderRadius: 8 }]}>
+      {/* Gradient always renders as background / placeholder */}
       <LinearGradient
         colors={card.art}
         locations={[0, 0.5, 1]}
@@ -30,7 +32,7 @@ export function CardThumb({ card, width, ratio = 1.4 }: Props) {
         style={StyleSheet.absoluteFill}
       />
 
-      {/* Foil shimmer for foil cards */}
+      {/* Foil shimmer for foil cards (below the real image) */}
       {card.foil && (
         <LinearGradient
           colors={[
@@ -46,7 +48,18 @@ export function CardThumb({ card, width, ratio = 1.4 }: Props) {
         />
       )}
 
-      {/* Border overlay */}
+      {/* Real card image — fades in over the gradient once loaded */}
+      {card.imageUrl && (
+        <Image
+          source={{ uri: card.imageUrl }}
+          style={[StyleSheet.absoluteFill, { borderRadius: 8 }]}
+          contentFit="cover"
+          transition={300}
+          recyclingKey={card.id}
+        />
+      )}
+
+      {/* Border overlay — always on top */}
       <View style={[StyleSheet.absoluteFill, styles.border, { borderRadius: 8 }]} />
     </View>
   );

@@ -112,6 +112,15 @@ export function Card3D({ card, width, large = false, onPress }: Props) {
           </View>
         )}
 
+        {/* Specular highlight — simulates physical card gloss at top-left */}
+        <LinearGradient
+          colors={['rgba(255,255,255,0.08)', 'transparent']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0.6, y: 0.6 }}
+          style={[StyleSheet.absoluteFill, { borderRadius: 8 }]}
+          pointerEvents="none"
+        />
+
         {large && <View style={[styles.shadow, { width, bottom: -12 }]} />}
       </Animated.View>
     </GestureDetector>

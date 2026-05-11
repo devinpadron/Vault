@@ -21,7 +21,9 @@ import Animated, {
 import { CardThumb } from '@/components/cards/CardThumb';
 import { Avatar } from '@/components/ui/Avatar';
 import { Icon } from '@/components/ui/Icon';
-import { MOCK_DATA } from '@/data/mock';
+import { ErrorPanel } from '@/components/ui/ErrorPanel';
+import { useListings, useLiveLot } from '@/lib/api/market';
+import { useFriends } from '@/lib/api/friends';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 import { Listing } from '@/types';
 
@@ -79,6 +81,7 @@ export default function MarketScreen() {
 
 function Listings() {
   const [sort, setSort] = useState(SORT_OPTIONS[0]);
+  const { data: listings = [], isError, refetch } = useListings(sort);
 
   return (
     <View>
@@ -101,8 +104,9 @@ function Listings() {
         ))}
       </ScrollView>
 
+      {isError && <ErrorPanel message="Failed to load listings" onRetry={refetch} />}
       <View style={styles.listingList}>
-        {MOCK_DATA.listings.map((listing, index) => (
+        {listings.map((listing: Listing, index: number) => (
           <ListingRow key={listing.id} listing={listing} index={index} />
         ))}
       </View>
@@ -167,7 +171,8 @@ const CHAT_COMMENTS = [
 ];
 
 function Live() {
-  const card = MOCK_DATA.cards[5]; // Chronoseer ★★
+  const { data: card } = useLiveLot();
+  const { data: friends = [] } = useFriends();
   const [bid, setBid] = useState(2840);
   const [bidders, setBidders] = useState(34);
   const [seconds, setSeconds] = useState(42);
@@ -237,7 +242,7 @@ function Live() {
           style={StyleSheet.absoluteFill}
         />
 
-        <CardThumb card={card} width={150} />
+        {card && <CardThumb card={card} width={150} />}
 
         {/* LIVE badge */}
         <View style={styles.liveBadge}>
@@ -266,8 +271,8 @@ function Live() {
       <View style={styles.lotPanel}>
         <Text style={styles.lotEyebrow}>Current lot · 04 of 12</Text>
         <Text style={styles.lotCardName}>
-          {card.name}{' '}
-          <Text style={styles.lotCardVariant}>{card.variant}</Text>
+          {card?.name ?? '—'}{' '}
+          <Text style={styles.lotCardVariant}>{card?.variant ?? ''}</Text>
         </Text>
 
         <View style={styles.bidRow}>
@@ -288,7 +293,7 @@ function Live() {
 
         <View style={styles.biddersRow}>
           <View style={styles.avatarStack}>
-            {MOCK_DATA.friends.slice(0, 3).map((f, i) => (
+            {friends.slice(0, 3).map((f, i) => (
               <View
                 key={f.id}
                 style={[styles.avatarBorder, { marginLeft: i > 0 ? -8 : 0, zIndex: 3 - i }]}

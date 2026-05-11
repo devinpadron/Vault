@@ -20,7 +20,8 @@ import Animated, {
 import { Card3D } from '@/components/cards/Card3D';
 import { PriceChart } from '@/components/charts/PriceChart';
 import { Icon } from '@/components/ui/Icon';
-import { MOCK_DATA } from '@/data/mock';
+import { useCard, useCardPriceHistory } from '@/lib/api/cards';
+import { useBinders, useAddCardToBinder } from '@/lib/api/binders';
 import { Colors, FontFamily, Spacing, Radius } from '@/constants/theme';
 
 type Range = '1W' | '1M' | '6M' | '1Y' | 'ALL';
@@ -79,7 +80,12 @@ export default function CardDetailScreen() {
     opacity: backdropOpacity.value,
   }));
 
-  const card = MOCK_DATA.cards.find(c => c.id === id);
+  const { data: card, isLoading: cardLoading } = useCard(id ?? '');
+  const { data: priceHistory = [] } = useCardPriceHistory(id ?? '', range, card?.value ?? 1000);
+  const { data: binders = [] } = useBinders();
+  const addCardToBinder = useAddCardToBinder();
+
+  if (cardLoading) return null;
   if (!card) return null;
 
   const pct = ((card.change / card.value) * 100).toFixed(1);
@@ -165,7 +171,7 @@ export default function CardDetailScreen() {
           </View>
 
           <PriceChart
-            data={MOCK_DATA.priceHistory}
+            data={priceHistory}
             range={range}
             onRangeChange={setRange}
           />
@@ -244,11 +250,11 @@ export default function CardDetailScreen() {
             <Text style={styles.sheetTitle}>Choose a destination</Text>
 
             <View style={styles.sheetList}>
-              {MOCK_DATA.binders.map(b => (
+              {binders.map(b => (
                 <TouchableOpacity
                   key={b.id}
                   style={styles.binderRow}
-                  onPress={closeSheet}
+                  onPress={() => { addCardToBinder(b.id); closeSheet(); }}
                   accessibilityRole="button"
                   accessibilityLabel={`Add to ${b.name}`}
                 >

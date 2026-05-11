@@ -4,15 +4,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Avatar } from '@/components/ui/Avatar';
-import { MOCK_DATA } from '@/data/mock';
+import { SkeletonRow } from '@/components/ui/SkeletonRow';
+import { ErrorPanel } from '@/components/ui/ErrorPanel';
+import { useFriends } from '@/lib/api/friends';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 import { Friend } from '@/types';
 
-const onlineCount = MOCK_DATA.friends.filter(f => f.online).length;
-
 export default function FriendsScreen() {
   const insets = useSafeAreaInsets();
-  const onlineFriends = MOCK_DATA.friends.filter(f => f.online);
+  const { data: friends = [], isLoading, isError, refetch } = useFriends();
+  const onlineFriends = friends.filter(f => f.online);
 
   return (
     <ScrollView
@@ -23,47 +24,54 @@ export default function FriendsScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.eyebrow}>
-          {MOCK_DATA.friends.length} friends · {onlineCount} online now
+          {friends.length} friends · {onlineFriends.length} online now
         </Text>
         <Text style={styles.title}>
           The <Text style={styles.titleAccent}>circle</Text>
         </Text>
       </View>
 
+      {isError && <ErrorPanel message="Failed to load friends" onRetry={refetch} />}
+
       {/* Story row — online friends */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.storyRow}
-        style={styles.storyScroll}
-      >
-        {onlineFriends.map(friend => (
-          <TouchableOpacity
-            key={friend.id}
-            style={styles.storyItem}
-            onPress={() => router.push(`/friend/${friend.id}`)}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={['#FFD700', '#ff5fb6']}
-              start={{ x: 0.15, y: 0 }}
-              end={{ x: 0.85, y: 1 }}
-              style={styles.storyRingOuter}
+      {!isError && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.storyRow}
+          style={styles.storyScroll}
+        >
+          {onlineFriends.map(friend => (
+            <TouchableOpacity
+              key={friend.id}
+              style={styles.storyItem}
+              onPress={() => router.push(`/friend/${friend.id}`)}
+              activeOpacity={0.8}
             >
-              <View style={styles.storyRingGap}>
-                <Avatar colors={friend.avatar} size={50} />
-              </View>
-            </LinearGradient>
-            <Text style={styles.storyName}>{friend.name.split(' ')[0]}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+              <LinearGradient
+                colors={['#FFD700', '#ff5fb6']}
+                start={{ x: 0.15, y: 0 }}
+                end={{ x: 0.85, y: 1 }}
+                style={styles.storyRingOuter}
+              >
+                <View style={styles.storyRingGap}>
+                  <Avatar colors={friend.avatar} size={50} />
+                </View>
+              </LinearGradient>
+              <Text style={styles.storyName}>{friend.name.split(' ')[0]}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
 
       {/* Full friend list */}
       <View style={styles.list}>
-        {MOCK_DATA.friends.map((friend, index) => (
-          <FriendRow key={friend.id} friend={friend} index={index} />
-        ))}
+        {isLoading
+          ? Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)
+          : friends.map((friend, index) => (
+              <FriendRow key={friend.id} friend={friend} index={index} />
+            ))
+        }
       </View>
     </ScrollView>
   );

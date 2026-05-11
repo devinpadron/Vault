@@ -13,6 +13,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CardThumb } from '@/components/cards/CardThumb';
 import { Icon } from '@/components/ui/Icon';
 import { MOCK_DATA } from '@/data/mock';
+import { useCards } from '@/lib/api/cards';
+import { useBinder } from '@/lib/api/binders';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 
 const CONTAINER_MARGIN = 18;
@@ -33,13 +35,14 @@ export default function BinderOpenScreen() {
   const [activePage, setActivePage] = useState(0);
   const insets = useSafeAreaInsets();
 
-  const binder = MOCK_DATA.binders.find(b => b.id === id);
+  const { data: binder } = useBinder(id ?? '');
+  const { data: apiCards = [] } = useCards();
   if (!binder) return null;
 
   const { width: screenWidth } = Dimensions.get('window');
   const thumbWidth = getThumbWidth(screenWidth);
 
-  const sleeveCards = MOCK_DATA.cards.slice(0, 9);
+  const sleeveCards = apiCards.length >= 9 ? apiCards.slice(0, 9) : MOCK_DATA.cards.slice(0, 9);
   const rows = [sleeveCards.slice(0, 3), sleeveCards.slice(3, 6), sleeveCards.slice(6, 9)];
 
   return (
