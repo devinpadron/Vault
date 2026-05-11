@@ -16,6 +16,13 @@ export interface CardFull extends CardBrief {
   types?: string[];
   suffix?: string;
   description?: string;
+  variants?: {
+    firstEdition?: boolean;
+    holo?: boolean;
+    normal?: boolean;
+    reverse?: boolean;
+    wPromo?: boolean;
+  };
   set: {
     id: string;
     name: string;

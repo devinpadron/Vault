@@ -16,6 +16,8 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
   withTiming,
+  withRepeat,
+  interpolate,
 } from 'react-native-reanimated';
 import { Card3D } from '@/components/cards/Card3D';
 import { PriceChart } from '@/components/charts/PriceChart';
@@ -23,12 +25,68 @@ import { Icon } from '@/components/ui/Icon';
 import { useCard, useCardPriceHistory } from '@/lib/api/cards';
 import { useBinders, useAddCardToBinder } from '@/lib/api/binders';
 import { Colors, FontFamily, Spacing, Radius } from '@/constants/theme';
+import { CardVariants } from '@/types';
 
 type Range = '1W' | '1M' | '6M' | '1Y' | 'ALL';
 
 function fmt(n: number) {
   if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
   return n.toFixed(2);
+}
+
+// Renders one chip per active variant. Skips 'normal' (no badge needed).
+function VariantChips({ variants }: { variants?: CardVariants }) {
+  // Always-running shimmer animation for the 1st edition chip.
+  // Hook runs unconditionally — rendering is conditional below.
+  const shimmer = useSharedValue(0);
+  useEffect(() => {
+    shimmer.value = withRepeat(withTiming(1, { duration: 1600 }), -1, true);
+  }, [shimmer]);
+  const sheenStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(shimmer.value, [0, 0.5, 1], [0, 0.6, 0]),
+  }));
+
+  if (!variants) return null;
+
+  return (
+    <>
+      {variants.holo && (
+        <LinearGradient
+          colors={['rgba(255,215,0,0.75)', 'rgba(122,107,255,0.75)', 'rgba(95,210,255,0.7)']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.chipHoloVariant}
+        >
+          <Text style={styles.chipHoloVariantText}>✦ HOLO</Text>
+        </LinearGradient>
+      )}
+      {variants.reverse && (
+        // Gradient border: gradient wrapper + dark inner View
+        <LinearGradient
+          colors={['#7A6BFF', '#5FD2FF', '#FF7AE0']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.chipRevBorder}
+        >
+          <View style={styles.chipRevInner}>
+            <Text style={styles.chipRevText}>REVERSE HOLO</Text>
+          </View>
+        </LinearGradient>
+      )}
+      {variants.wPromo && (
+        <View style={[styles.chip, styles.chipPromo]}>
+          <Text style={styles.chipPromoText}>★ PROMO</Text>
+        </View>
+      )}
+      {variants.firstEdition && (
+        <View style={[styles.chip, styles.chipFirstEd]}>
+          <Text style={styles.chipFirstEdText}>1ST ED</Text>
+          {/* Animated gold sheen that pulses over the chip */}
+          <Animated.View style={[StyleSheet.absoluteFill, styles.chipFirstEdSheen, sheenStyle]} />
+        </View>
+      )}
+    </>
+  );
 }
 
 export default function CardDetailScreen() {
@@ -139,9 +197,7 @@ export default function CardDetailScreen() {
                   <Text style={styles.chipText}>{card.rarity.toUpperCase()}</Text>
                 </View>
             }
-            <View style={styles.chip}>
-              <Text style={styles.chipText}>{card.types[0].toUpperCase()}</Text>
-            </View>
+            <VariantChips variants={card.variants} />
           </View>
         </View>
 
@@ -380,6 +436,66 @@ const styles = StyleSheet.create({
     fontSize: 10,
     letterSpacing: 1.2,
     color: '#9D8FFF',
+  },
+  // Variant: Holo — rainbow gradient fill
+  chipHoloVariant: {
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    overflow: 'hidden',
+  },
+  chipHoloVariantText: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    letterSpacing: 1.2,
+    color: '#fff',
+    textShadowColor: 'rgba(0,0,0,0.4)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  // Variant: Reverse Holo — gradient border, dark fill
+  chipRevBorder: {
+    borderRadius: 7,
+    padding: 1.5,
+  },
+  chipRevInner: {
+    backgroundColor: Colors.bg,
+    borderRadius: 5.5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  chipRevText: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    letterSpacing: 1.2,
+    color: '#A29AFF',
+  },
+  // Variant: Promo — teal/cyan
+  chipPromo: {
+    borderColor: 'rgba(0,210,180,0.5)',
+    backgroundColor: 'rgba(0,210,180,0.1)',
+  },
+  chipPromoText: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    letterSpacing: 1.2,
+    color: '#00D2B4',
+  },
+  // Variant: 1st Edition — gold with pulsing sheen
+  chipFirstEd: {
+    borderColor: 'rgba(255,215,0,0.65)',
+    backgroundColor: 'rgba(255,215,0,0.14)',
+    overflow: 'hidden',
+  },
+  chipFirstEdText: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    letterSpacing: 1.2,
+    color: Colors.gold,
+  },
+  chipFirstEdSheen: {
+    backgroundColor: 'rgba(255,255,255,0.75)',
+    borderRadius: 6,
   },
   // Price panel
   panel: {

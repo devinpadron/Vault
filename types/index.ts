@@ -1,5 +1,13 @@
 export type CardType = 'fire' | 'water' | 'grass' | 'bolt' | 'psy' | 'dark' | 'metal' | 'dragon' | 'fairy';
 
+export interface CardVariants {
+  firstEdition: boolean;
+  holo: boolean;
+  normal: boolean;
+  reverse: boolean;
+  wPromo: boolean;
+}
+
 export interface Card {
   id: string;
   name: string;
@@ -18,6 +26,7 @@ export interface Card {
   imageUrl?: string;
   hp?: number;
   description?: string;
+  variants?: CardVariants;
 }
 
 export interface Binder {

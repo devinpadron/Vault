@@ -25,7 +25,7 @@ function mapCard(raw: CardFull, index = 0): AppCard {
   const variant = raw.suffix ?? RARITY_VARIANTS[rarity] ?? '—';
   const totalCards = raw.set?.cardCount?.official ?? raw.set?.cardCount?.total ?? 0;
   const cardNo = totalCards > 0 ? `${raw.localId}/${totalCards}` : String(raw.localId ?? '?');
-
+  console.log(raw);
   return {
     id:          raw.id ?? `card-${index}`,
     name:        raw.name ?? 'Unknown',
@@ -44,6 +44,15 @@ function mapCard(raw: CardFull, index = 0): AppCard {
     imageUrl,
     hp:          raw.hp,
     description: raw.description,
+    variants:    raw.variants
+      ? {
+          firstEdition: raw.variants.firstEdition ?? false,
+          holo:         raw.variants.holo ?? false,
+          normal:       raw.variants.normal ?? false,
+          reverse:      raw.variants.reverse ?? false,
+          wPromo:       raw.variants.wPromo ?? false,
+        }
+      : undefined,
   };
 }
 
