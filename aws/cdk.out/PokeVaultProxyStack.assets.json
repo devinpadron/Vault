@@ -1,0 +1,36 @@
+{
+  "version": "53.0.0",
+  "files": {
+    "4bdf29bd6c589f0b6cc02f1e41d8aa77d67c51c39716450a3b0a817c6082bd26": {
+      "displayName": "ScrydexProxy/Code",
+      "source": {
+        "path": "asset.4bdf29bd6c589f0b6cc02f1e41d8aa77d67c51c39716450a3b0a817c6082bd26",
+        "packaging": "zip"
+      },
+      "destinations": {
+        "099620180291-us-east-1-a82843a6": {
+          "bucketName": "cdk-hnb659fds-assets-099620180291-us-east-1",
+          "objectKey": "4bdf29bd6c589f0b6cc02f1e41d8aa77d67c51c39716450a3b0a817c6082bd26.zip",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::099620180291:role/cdk-hnb659fds-file-publishing-role-099620180291-us-east-1"
+        }
+      }
+    },
+    "fdb3cebcb17f7492bdba8a2928bf53a4f71126ec8579a688d897e3424a73d965": {
+      "displayName": "PokeVaultProxyStack Template",
+      "source": {
+        "path": "PokeVaultProxyStack.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "099620180291-us-east-1-eee466c5": {
+          "bucketName": "cdk-hnb659fds-assets-099620180291-us-east-1",
+          "objectKey": "fdb3cebcb17f7492bdba8a2928bf53a4f71126ec8579a688d897e3424a73d965.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::099620180291:role/cdk-hnb659fds-file-publishing-role-099620180291-us-east-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}
