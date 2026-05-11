@@ -7,7 +7,7 @@ import { Card3D } from '@/components/cards/Card3D';
 import { SkeletonCardCell } from '@/components/ui/SkeletonCard';
 import { FilterPills } from '@/components/ui/FilterPills';
 import { Icon } from '@/components/ui/Icon';
-import { useCards } from '@/lib/api/cards';
+import { useCollectionCards } from '@/lib/db/collection';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
 import { Card, cardBaseName, cardNameVariant } from '@/types';
 
@@ -52,7 +52,7 @@ function CardCell({ card, index }: { card: Card; index: number }) {
 export default function CollectionScreen() {
   const [filter, setFilter] = useState('All');
   const insets = useSafeAreaInsets();
-  const { data: allCards = [], isLoading } = useCards();
+  const { data: allCards = [], isLoading } = useCollectionCards();
 
   const cards = allCards.filter((c: Card) => filter === 'Foil' ? c.foil : true);
 
@@ -68,6 +68,16 @@ export default function CollectionScreen() {
       style={styles.screen}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + 16, paddingBottom: 100 }]}
       showsVerticalScrollIndicator={false}
+      ListEmptyComponent={
+        !isLoading && cards.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No cards yet</Text>
+            <Text style={styles.emptySubtitle}>
+              Search for cards and tap "Add to collection" to start building your vault.
+            </Text>
+          </View>
+        ) : null
+      }
       ListHeaderComponent={
         <>
           <View style={styles.header}>
@@ -192,6 +202,24 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.body,
     fontSize: 12,
     color: Colors.text,
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 24,
+  },
+  emptyTitle: {
+    fontFamily: FontFamily.display,
+    fontSize: 22,
+    color: Colors.text3,
+    marginBottom: 10,
+  },
+  emptySubtitle: {
+    fontFamily: FontFamily.body,
+    fontSize: 14,
+    color: Colors.text3,
+    textAlign: 'center',
+    lineHeight: 20,
   },
   row: {
     flexDirection: 'row',

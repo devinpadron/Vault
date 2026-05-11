@@ -12,10 +12,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CardThumb } from '@/components/cards/CardThumb';
 import { Icon } from '@/components/ui/Icon';
-import { MOCK_DATA } from '@/data/mock';
-import { useCards } from '@/lib/api/cards';
-import { useBinder } from '@/lib/api/binders';
+import { useBinder, useBinderCards } from '@/lib/api/binders';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
+import { Card } from '@/types';
 
 const CONTAINER_MARGIN = 18;
 const CONTAINER_PADDING = 14;
@@ -36,14 +35,18 @@ export default function BinderOpenScreen() {
   const insets = useSafeAreaInsets();
 
   const { data: binder } = useBinder(id ?? '');
-  const { data: apiCards = [] } = useCards();
+  const { data: binderCards = [] } = useBinderCards(id ?? '');
   if (!binder) return null;
 
   const { width: screenWidth } = Dimensions.get('window');
   const thumbWidth = getThumbWidth(screenWidth);
 
-  const sleeveCards = apiCards.length >= 9 ? apiCards.slice(0, 9) : MOCK_DATA.cards.slice(0, 9);
-  const rows = [sleeveCards.slice(0, 3), sleeveCards.slice(3, 6), sleeveCards.slice(6, 9)];
+  const sleeveCards = binderCards.slice(0, 9);
+  const paddedCards: (Card | null)[] = [
+    ...sleeveCards,
+    ...Array(Math.max(0, 9 - sleeveCards.length)).fill(null),
+  ];
+  const rows = [paddedCards.slice(0, 3), paddedCards.slice(3, 6), paddedCards.slice(6, 9)];
 
   return (
     <View style={styles.root}>
@@ -69,7 +72,7 @@ export default function BinderOpenScreen() {
 
         {/* Title */}
         <View style={styles.titleSection}>
-          <Text style={styles.eyebrow}>{binder.subtitle}</Text>
+          <Text style={styles.eyebrow}>{binder.subtitle || `${binder.count} CARDS`}</Text>
           <Text style={styles.title}>{binder.name}</Text>
         </View>
 
@@ -82,30 +85,41 @@ export default function BinderOpenScreen() {
             style={StyleSheet.absoluteFill}
           />
 
-          <View style={styles.grid}>
-            {rows.map((row, rowIndex) => (
-              <View key={rowIndex} style={[styles.gridRow, rowIndex < rows.length - 1 && { marginBottom: COL_GAP }]}>
-                {row.map(card => (
-                  <View key={card.id} style={[styles.sleeve, { width: thumbWidth + SLEEVE_PADDING * 2 }]}>
-                    <CardThumb card={card} width={thumbWidth} />
-                    <LinearGradient
-                      colors={[
-                        'rgba(255,255,255,0.18)',
-                        'transparent',
-                        'transparent',
-                        'rgba(255,255,255,0.08)',
-                      ]}
-                      locations={[0, 0.3, 0.7, 1]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={[StyleSheet.absoluteFill, { borderRadius: Radius.sm }]}
-                      pointerEvents="none"
-                    />
-                  </View>
-                ))}
-              </View>
-            ))}
-          </View>
+          {binderCards.length === 0 ? (
+            <View style={styles.emptyGrid}>
+              <Text style={styles.emptyTitle}>No cards yet</Text>
+              <Text style={styles.emptySubtitle}>Add cards to your collection</Text>
+            </View>
+          ) : (
+            <View style={styles.grid}>
+              {rows.map((row, rowIndex) => (
+                <View key={rowIndex} style={[styles.gridRow, rowIndex < rows.length - 1 && { marginBottom: COL_GAP }]}>
+                  {row.map((card, colIndex) => (
+                    <View key={colIndex} style={[styles.sleeve, { width: thumbWidth + SLEEVE_PADDING * 2 }]}>
+                      {card ? (
+                        <CardThumb card={card} width={thumbWidth} />
+                      ) : (
+                        <View style={{ width: thumbWidth, height: Math.floor(thumbWidth * 1.4), backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 4 }} />
+                      )}
+                      <LinearGradient
+                        colors={[
+                          'rgba(255,255,255,0.18)',
+                          'transparent',
+                          'transparent',
+                          'rgba(255,255,255,0.08)',
+                        ]}
+                        locations={[0, 0.3, 0.7, 1]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={[StyleSheet.absoluteFill, { borderRadius: Radius.sm }]}
+                        pointerEvents="none"
+                      />
+                    </View>
+                  ))}
+                </View>
+              ))}
+            </View>
+          )}
 
           {/* Pagination dots */}
           <View style={styles.dotsRow}>
@@ -144,7 +158,6 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 0,
   },
-  // Nav bar
   navBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -166,7 +179,6 @@ const styles = StyleSheet.create({
     borderColor: Colors.line,
     backgroundColor: 'rgba(255,255,255,0.04)',
   },
-  // Title
   titleSection: {
     paddingHorizontal: Spacing.xl,
     paddingBottom: 22,
@@ -185,7 +197,6 @@ const styles = StyleSheet.create({
     color: Colors.text,
     lineHeight: 34,
   },
-  // Sleeve grid container
   sleeveContainer: {
     borderRadius: Radius.lg,
     overflow: 'hidden',
@@ -197,6 +208,21 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5,
     shadowRadius: 24,
     elevation: 12,
+  },
+  emptyGrid: {
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  emptyTitle: {
+    fontFamily: FontFamily.display,
+    fontSize: 18,
+    color: 'rgba(255,255,255,0.6)',
+    marginBottom: 6,
+  },
+  emptySubtitle: {
+    fontFamily: FontFamily.body,
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.4)',
   },
   grid: {
     flexDirection: 'column',
@@ -210,11 +236,9 @@ const styles = StyleSheet.create({
     borderRadius: Radius.sm,
     backgroundColor: 'rgba(0,0,0,0.35)',
     overflow: 'hidden',
-    // Inset shadow simulation via border
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
   },
-  // Pagination
   dotsRow: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -231,7 +255,6 @@ const styles = StyleSheet.create({
     width: 16,
     backgroundColor: 'rgba(255,255,255,0.9)',
   },
-  // CTAs
   ctaRow: {
     flexDirection: 'row',
     gap: 10,

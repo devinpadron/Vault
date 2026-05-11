@@ -1,20 +1,20 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
+  Alert,
   Modal,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
   withTiming,
   withRepeat,
   interpolate,
@@ -23,11 +23,21 @@ import { Card3D } from '@/components/cards/Card3D';
 import { PriceChart } from '@/components/charts/PriceChart';
 import { Icon } from '@/components/ui/Icon';
 import { useCard, useCardPriceHistory } from '@/lib/api/cards';
-import { useBinders, useAddCardToBinder } from '@/lib/api/binders';
+import { useBinders, useAddCardToBinder, useCreateBinder } from '@/lib/api/binders';
+import { useIsInCollection, useAddToCollection, useRemoveFromCollection } from '@/lib/db/collection';
 import { Colors, FontFamily, Spacing, Radius } from '@/constants/theme';
 import { CardVariants, cardBaseName, cardNameVariant } from '@/types';
 
 type Range = '1W' | '1M' | '6M' | '1Y' | 'ALL';
+
+const TONE_PAIRS: [string, string][] = [
+  ['#1F0E3A', '#7A6BFF'],
+  ['#3A0E0E', '#FF7A3A'],
+  ['#0E1F3A', '#5FD2FF'],
+  ['#0E2F1F', '#9CFF6E'],
+  ['#3A2A0E', '#FFE03A'],
+  ['#1F0E2A', '#FF7AE0'],
+];
 
 function fmt(n: number) {
   if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -36,8 +46,6 @@ function fmt(n: number) {
 
 // Renders one chip per active variant. Skips 'normal' (no badge needed).
 function VariantChips({ variants }: { variants?: CardVariants }) {
-  // Always-running shimmer animation for the 1st edition chip.
-  // Hook runs unconditionally — rendering is conditional below.
   const shimmer = useSharedValue(0);
   useEffect(() => {
     shimmer.value = withRepeat(withTiming(1, { duration: 1600 }), -1, true);
@@ -61,7 +69,6 @@ function VariantChips({ variants }: { variants?: CardVariants }) {
         </LinearGradient>
       )}
       {variants.reverse && (
-        // Gradient border: gradient wrapper + dark inner View
         <LinearGradient
           colors={['#7A6BFF', '#5FD2FF', '#FF7AE0']}
           start={{ x: 0, y: 0 }}
@@ -81,7 +88,6 @@ function VariantChips({ variants }: { variants?: CardVariants }) {
       {variants.firstEdition && (
         <View style={[styles.chip, styles.chipFirstEd]}>
           <Text style={styles.chipFirstEdText}>1ST ED</Text>
-          {/* Animated gold sheen that pulses over the chip */}
           <Animated.View style={[StyleSheet.absoluteFill, styles.chipFirstEdSheen, sheenStyle]} />
         </View>
       )}
@@ -93,55 +99,40 @@ export default function CardDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [range, setRange] = useState<Range>('1M');
   const [binderSheetOpen, setBinderSheetOpen] = useState(false);
+  const [newBinderMode, setNewBinderMode] = useState(false);
+  const [newBinderName, setNewBinderName] = useState('');
+  const [newBinderTone, setNewBinderTone] = useState<[string, string]>(TONE_PAIRS[0]);
   const insets = useSafeAreaInsets();
-
-  const sheetY = useSharedValue(500);
-  const backdropOpacity = useSharedValue(0);
-  const panStartY = useSharedValue(0);
-
-  const openSheet = useCallback(() => {
-    sheetY.value = 500;
-    backdropOpacity.value = 0;
-    setBinderSheetOpen(true);
-  }, [sheetY, backdropOpacity]);
-
-  const closeSheet = useCallback(() => {
-    sheetY.value = withSpring(500, { damping: 22, stiffness: 180 });
-    backdropOpacity.value = withTiming(0, { duration: 220 });
-    setTimeout(() => setBinderSheetOpen(false), 270);
-  }, [sheetY, backdropOpacity]);
-
-  useEffect(() => {
-    if (binderSheetOpen) {
-      sheetY.value = withSpring(0, { damping: 22, stiffness: 200 });
-      backdropOpacity.value = withTiming(1, { duration: 250 });
-    }
-  }, [binderSheetOpen, sheetY, backdropOpacity]);
-
-  const sheetPan = Gesture.Pan()
-    .runOnJS(true)
-    .onBegin(() => { panStartY.value = sheetY.value; })
-    .onUpdate((e) => { sheetY.value = Math.max(0, panStartY.value + e.translationY); })
-    .onEnd((e) => {
-      if (sheetY.value > 100 || e.velocityY > 600) {
-        closeSheet();
-      } else {
-        sheetY.value = withSpring(0, { damping: 22, stiffness: 200 });
-      }
-    });
-
-  const sheetAnimStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: sheetY.value }],
-  }));
-
-  const backdropAnimStyle = useAnimatedStyle(() => ({
-    opacity: backdropOpacity.value,
-  }));
 
   const { data: card, isLoading: cardLoading } = useCard(id ?? '');
   const { data: priceHistory = [] } = useCardPriceHistory(id ?? '', range, card?.value ?? 1000);
   const { data: binders = [] } = useBinders();
   const addCardToBinder = useAddCardToBinder();
+  const createBinder = useCreateBinder();
+  const { data: isInCollection = false } = useIsInCollection(card?.id ?? '');
+  const addToCollection = useAddToCollection();
+  const removeFromCollection = useRemoveFromCollection();
+
+  function openSheet() {
+    setNewBinderMode(false);
+    setNewBinderName('');
+    setNewBinderTone(TONE_PAIRS[0]);
+    setBinderSheetOpen(true);
+  }
+
+  function closeSheet() {
+    setBinderSheetOpen(false);
+  }
+
+  async function handleCreateBinder() {
+    if (!newBinderName.trim()) {
+      Alert.alert('Name required', 'Please enter a binder name.');
+      return;
+    }
+    await createBinder(newBinderName.trim(), newBinderTone[0], newBinderTone[1]);
+    setNewBinderMode(false);
+    setNewBinderName('');
+  }
 
   if (cardLoading) return null;
   if (!card) return null;
@@ -155,7 +146,7 @@ export default function CardDetailScreen() {
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Sticky-style header */}
+        {/* Nav bar */}
         <View style={[styles.navBar, { paddingTop: insets.top + 8 }]}>
           <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
             <Icon name="chevron-left" size={18} color={Colors.text} />
@@ -228,11 +219,7 @@ export default function CardDetailScreen() {
             </View>
           </View>
 
-          <PriceChart
-            data={priceHistory}
-            range={range}
-            onRangeChange={setRange}
-          />
+          <PriceChart data={priceHistory} range={range} onRangeChange={setRange} />
 
           <View style={styles.divider} />
 
@@ -268,6 +255,16 @@ export default function CardDetailScreen() {
         {/* CTAs */}
         <View style={styles.ctaRow}>
           <TouchableOpacity
+            style={[styles.ctaSecondary, isInCollection && styles.ctaSecondaryActive]}
+            onPress={() => isInCollection ? removeFromCollection(card.id) : addToCollection(card)}
+            accessibilityLabel={isInCollection ? 'Remove from collection' : 'Add to collection'}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.ctaSecondaryText, isInCollection && styles.ctaSecondaryActiveText]}>
+              {isInCollection ? 'In collection ✓' : 'Add to collection'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
             style={[styles.ctaPrimary, { flex: 1 }]}
             onPress={openSheet}
             accessibilityLabel="Add card to binder"
@@ -277,6 +274,7 @@ export default function CardDetailScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.ctaIcon}
+            onPress={() => router.push('/(tabs)/market')}
             accessibilityLabel="Trade card"
             accessibilityRole="button"
           >
@@ -285,60 +283,99 @@ export default function CardDetailScreen() {
         </View>
       </ScrollView>
 
-      {/* Add to Binder — gesture-dismissible bottom sheet */}
+      {/* Add to Binder sheet */}
       <Modal
         visible={binderSheetOpen}
         transparent
-        animationType="none"
+        animationType="slide"
         onRequestClose={closeSheet}
         statusBarTranslucent
       >
-        {/* Animated backdrop */}
-        <Animated.View style={[styles.backdrop, backdropAnimStyle]}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeSheet} />
-        </Animated.View>
+        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={closeSheet} />
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <View style={styles.sheetGrabber} />
 
-        {/* Gesture-driven sheet */}
-        <GestureDetector gesture={sheetPan}>
-          <Animated.View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }, sheetAnimStyle]}>
-            <View style={styles.sheetGrabber} />
-            <Text style={styles.sheetEyebrow}>Add to binder</Text>
-            <Text style={styles.sheetTitle}>Choose a destination</Text>
-
-            <View style={styles.sheetList}>
-              {binders.map(b => (
-                <TouchableOpacity
-                  key={b.id}
-                  style={styles.binderRow}
-                  onPress={() => { addCardToBinder(b.id); closeSheet(); }}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Add to ${b.name}`}
-                >
-                  <LinearGradient
-                    colors={b.tone}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.binderThumb}
-                  />
-                  <View style={styles.binderInfo}>
-                    <Text style={styles.binderName}>{b.name}</Text>
-                    <Text style={styles.binderCount}>{b.count} CARDS</Text>
-                  </View>
-                  <Icon name="chevron-right" size={16} color={Colors.text3} />
-                </TouchableOpacity>
-              ))}
-
-              <TouchableOpacity
-                style={styles.newBinder}
-                accessibilityRole="button"
-                accessibilityLabel="Create new binder"
-              >
-                <Icon name="plus" size={14} color={Colors.text2} />
-                <Text style={styles.newBinderText}>New binder</Text>
+          {newBinderMode ? (
+            <>
+              <TouchableOpacity style={styles.backRow} onPress={() => setNewBinderMode(false)}>
+                <Icon name="chevron-left" size={14} color={Colors.text3} />
+                <Text style={styles.backLabel}>Back</Text>
               </TouchableOpacity>
-            </View>
-          </Animated.View>
-        </GestureDetector>
+              <Text style={styles.sheetEyebrow}>New binder</Text>
+              <Text style={styles.sheetTitle}>Name & color</Text>
+              <TextInput
+                style={styles.sheetInput}
+                placeholder="Binder name"
+                placeholderTextColor={Colors.text3}
+                value={newBinderName}
+                onChangeText={setNewBinderName}
+                autoFocus
+                returnKeyType="done"
+              />
+              <View style={styles.swatchRow}>
+                {TONE_PAIRS.map(([start, end]) => (
+                  <TouchableOpacity
+                    key={start}
+                    style={[styles.swatch, newBinderTone[0] === start && styles.swatchSelected]}
+                    onPress={() => setNewBinderTone([start, end])}
+                  >
+                    <LinearGradient
+                      colors={[start, end]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.swatchGradient}
+                    />
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TouchableOpacity style={styles.createBtn} onPress={handleCreateBinder}>
+                <Text style={styles.createBtnText}>Create binder</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Text style={styles.sheetEyebrow}>Add to binder</Text>
+              <Text style={styles.sheetTitle}>Choose a destination</Text>
+              <View style={styles.sheetList}>
+                {binders.map(b => (
+                  <TouchableOpacity
+                    key={b.id}
+                    style={styles.binderRow}
+                    onPress={async () => {
+                      await addCardToBinder(b.id, card);
+                      closeSheet();
+                      Alert.alert('Added', `${card.name} added to ${b.name}`);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Add to ${b.name}`}
+                  >
+                    <LinearGradient
+                      colors={b.tone}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.binderThumb}
+                    />
+                    <View style={styles.binderInfo}>
+                      <Text style={styles.binderName}>{b.name}</Text>
+                      <Text style={styles.binderCount}>{b.count} CARDS</Text>
+                    </View>
+                    <Icon name="chevron-right" size={16} color={Colors.text3} />
+                  </TouchableOpacity>
+                ))}
+
+                <TouchableOpacity
+                  style={styles.newBinder}
+                  onPress={() => setNewBinderMode(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Create new binder"
+                >
+                  <Icon name="plus" size={14} color={Colors.text2} />
+                  <Text style={styles.newBinderText}>New binder</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </View>
       </Modal>
     </View>
   );
@@ -437,7 +474,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     color: '#9D8FFF',
   },
-  // Variant: Holo — rainbow gradient fill
   chipHoloVariant: {
     borderRadius: 6,
     paddingHorizontal: 10,
@@ -453,7 +489,6 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
-  // Variant: Reverse Holo — gradient border, dark fill
   chipRevBorder: {
     borderRadius: 7,
     padding: 1.5,
@@ -470,7 +505,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     color: '#A29AFF',
   },
-  // Variant: Promo — teal/cyan
   chipPromo: {
     borderColor: 'rgba(0,210,180,0.5)',
     backgroundColor: 'rgba(0,210,180,0.1)',
@@ -481,7 +515,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     color: '#00D2B4',
   },
-  // Variant: 1st Edition — gold with pulsing sheen
   chipFirstEd: {
     borderColor: 'rgba(255,215,0,0.65)',
     backgroundColor: 'rgba(255,215,0,0.14)',
@@ -597,6 +630,27 @@ const styles = StyleSheet.create({
     gap: 10,
     marginHorizontal: Spacing.xl,
   },
+  ctaSecondary: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ctaSecondaryActive: {
+    borderColor: Colors.gold,
+  },
+  ctaSecondaryText: {
+    fontFamily: FontFamily.body,
+    fontSize: 12,
+    color: Colors.text2,
+  },
+  ctaSecondaryActiveText: {
+    color: Colors.gold,
+  },
   ctaPrimary: {
     paddingVertical: 14,
     borderRadius: Radius.md,
@@ -618,7 +672,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // Binder sheet
+  // Sheet
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -656,6 +710,7 @@ const styles = StyleSheet.create({
   sheetList: {
     gap: 10,
   },
+  // Binder list row
   binderRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -704,5 +759,59 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.body,
     fontSize: 13,
     color: Colors.text2,
+  },
+  // Inline binder creation
+  backRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 14,
+  },
+  backLabel: {
+    fontFamily: FontFamily.body,
+    fontSize: 13,
+    color: Colors.text3,
+  },
+  sheetInput: {
+    borderWidth: 1,
+    borderColor: Colors.line,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    fontFamily: FontFamily.body,
+    fontSize: 15,
+    color: Colors.text,
+    backgroundColor: Colors.surface,
+    marginBottom: 18,
+  },
+  swatchRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 20,
+  },
+  swatch: {
+    flex: 1,
+    height: 40,
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  swatchSelected: {
+    borderColor: Colors.gold,
+  },
+  swatchGradient: {
+    flex: 1,
+  },
+  createBtn: {
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: Colors.gold,
+    alignItems: 'center',
+  },
+  createBtnText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 14,
+    color: '#0A0A0C',
   },
 });

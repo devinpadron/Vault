@@ -7,15 +7,13 @@ import { Card3D } from '@/components/cards/Card3D';
 import { SkeletonCard } from '@/components/ui/SkeletonCard';
 import { Sparkline } from '@/components/charts/Sparkline';
 import { Icon } from '@/components/ui/Icon';
-import { MOCK_DATA } from '@/data/mock';
-import { useFeaturedCard } from '@/lib/api/cards';
+import { useFeaturedCard, useCardPriceHistory } from '@/lib/api/cards';
 import { useNews } from '@/lib/api/news';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { useCollectionCards } from '@/lib/db/collection';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
 import { NewsItem } from '@/types';
 import { cardBaseName, cardNameVariant } from '@/types';
-
-const STATS = { value: 84320, count: 412, change24h: 982.40 };
 
 function fmt(n: number) {
   if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -27,6 +25,15 @@ export default function HomeScreen() {
   const { data: featured, isLoading: featuredLoading } = useFeaturedCard();
   const { data: news = [] } = useNews();
   const { user } = useAuth();
+  const { data: collectionCards = [] } = useCollectionCards();
+
+  const totalValue = collectionCards.reduce((sum, c) => sum + c.value, 0);
+  const totalChange = collectionCards.reduce((sum, c) => sum + c.change, 0);
+  const cardCount = collectionCards.length;
+
+  const totalValueStr = totalValue.toFixed(2);
+  const [valuePrimary, valueCents] = totalValueStr.split('.');
+  const { data: priceHistory = [] } = useCardPriceHistory('portfolio', '1M', totalValue || 1000);
 
   const now = new Date();
   const dateLabel = now
@@ -74,21 +81,31 @@ export default function HomeScreen() {
       {/* Stats card */}
       <Animated.View entering={FadeInDown.delay(80).duration(340)} style={styles.statsCard}>
         <Text style={styles.eyebrow}>Collection · Total</Text>
-        <View style={styles.statsValue}>
-          <Text style={styles.statsSymbol}>$</Text>
-          <Text style={styles.statsNumber}>{fmt(STATS.value)}</Text>
-          <Text style={styles.statsCents}>.42</Text>
-        </View>
-        <View style={styles.statsRow}>
-          <View style={styles.statsChange}>
-            <Icon name="arrow-up" size={13} color={Colors.up} />
-            <Text style={[styles.mono, { fontSize: 13, color: Colors.up }]}>+${fmt(STATS.change24h)}</Text>
-            <Text style={[styles.mono, { fontSize: 11, color: Colors.text3 }]}>· 24H</Text>
-          </View>
-          <View style={styles.dividerV} />
-          <Text style={[styles.mono, { fontSize: 12, color: Colors.text2 }]}>{STATS.count} CARDS</Text>
-        </View>
-        <Sparkline data={MOCK_DATA.priceHistory} />
+        {cardCount === 0 ? (
+          <Text style={[styles.mono, { fontSize: 13, color: Colors.text3, paddingVertical: 14 }]}>
+            Add cards to start tracking your collection
+          </Text>
+        ) : (
+          <>
+            <View style={styles.statsValue}>
+              <Text style={styles.statsSymbol}>$</Text>
+              <Text style={styles.statsNumber}>{Number(valuePrimary).toLocaleString('en-US')}</Text>
+              <Text style={styles.statsCents}>.{valueCents}</Text>
+            </View>
+            <View style={styles.statsRow}>
+              <View style={styles.statsChange}>
+                <Icon name={totalChange >= 0 ? 'arrow-up' : 'arrow-down'} size={13} color={totalChange >= 0 ? Colors.up : Colors.down} />
+                <Text style={[styles.mono, { fontSize: 13, color: totalChange >= 0 ? Colors.up : Colors.down }]}>
+                  {totalChange >= 0 ? '+' : ''}${fmt(Math.abs(totalChange))}
+                </Text>
+                <Text style={[styles.mono, { fontSize: 11, color: Colors.text3 }]}>· 30D</Text>
+              </View>
+              <View style={styles.dividerV} />
+              <Text style={[styles.mono, { fontSize: 12, color: Colors.text2 }]}>{cardCount} CARDS</Text>
+            </View>
+            <Sparkline data={priceHistory} />
+          </>
+        )}
       </Animated.View>
 
       {/* Featured card */}
