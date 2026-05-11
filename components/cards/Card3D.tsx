@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { useSharedValue, withSpring, useDerivedValue } from 'react-native-reanimated';
+import { useSharedValue, withSpring, useDerivedValue, useFrameCallback } from 'react-native-reanimated';
 import {
   Canvas,
   Group,
@@ -23,6 +23,7 @@ interface Props {
   width: number;
   large?: boolean;
   onPress?: () => void;
+  sway?: boolean;
 }
 
 const SPRING = { damping: 14, stiffness: 180 } as const;
@@ -52,7 +53,7 @@ function useNetworkImage(url?: string): SkImage | null {
   return image;
 }
 
-export function Card3D({ card, width, large = false, onPress }: Props) {
+export function Card3D({ card, width, large = false, onPress, sway = false }: Props) {
   const height = width * 1.4;
   const cx = width / 2;
   const cy = height / 2;
@@ -63,6 +64,31 @@ export function Card3D({ card, width, large = false, onPress }: Props) {
   const rotateX = useSharedValue(0);
   const rotateY = useSharedValue(0);
   const scale = useSharedValue(1);
+
+  // Idle sway — drives the frame callback; 1 = swaying, 0 = paused by gesture
+  const swayOn = useSharedValue(sway ? 1 : 0);
+  // Timestamp (ms) when the sway last resumed, used to ease amplitude in
+  const swayT0 = useSharedValue(-1);
+
+  // Mirror the HTML prototype's requestAnimationFrame loop, but on the UI thread
+  // so there are zero JS re-renders and therefore no jitter.
+  useFrameCallback((info) => {
+    'worklet';
+    if (!swayOn.value) return;
+    if (swayT0.value < 0) swayT0.value = info.timestamp;
+    const elapsed = (info.timestamp - swayT0.value) / 1000;
+    const t = info.timestamp / 1000;
+    // Ease amplitude from 0 → 1 over 1.2 s so the sway fades in after a gesture
+    const amp = elapsed < 1.2 ? elapsed / 1.2 : 1.0;
+    rotateY.value = Math.sin(t * 0.7) * 4 * amp;
+    rotateX.value = Math.cos(t * 0.5) * 3 * amp;
+  });
+
+  const swayTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const enableSway = useCallback(() => {
+    swayOn.value = 1;
+    swayT0.value = -1;
+  }, [swayOn, swayT0]);
 
   const cardImage = useNetworkImage(card.imageUrl);
 
@@ -126,6 +152,10 @@ export function Card3D({ card, width, large = false, onPress }: Props) {
     // Run callbacks on JS thread so Haptics can be called from onBegin.
     .runOnJS(true)
     .onBegin(() => {
+      // Pause idle sway while the user is interacting
+      clearTimeout(swayTimer.current);
+      swayOn.value = 0;
+      swayT0.value = -1;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       scale.value = withSpring(1.03, SPRING);
     })
@@ -138,6 +168,8 @@ export function Card3D({ card, width, large = false, onPress }: Props) {
       rotateX.value = withSpring(0, SPRING);
       rotateY.value = withSpring(0, SPRING);
       scale.value = withSpring(1, SPRING);
+      // Re-enable sway after the springs have mostly settled (~500 ms)
+      if (sway) swayTimer.current = setTimeout(enableSway, 500);
     });
 
   // .runOnJS(true) makes onEnd run on the JS thread so router.push works directly

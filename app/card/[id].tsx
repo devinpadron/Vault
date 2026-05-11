@@ -120,7 +120,7 @@ export default function CardDetailScreen() {
             end={{ x: 0.5, y: 0.8 }}
             style={StyleSheet.absoluteFill}
           />
-          <Card3D card={card} width={240} large />
+          <Card3D card={card} width={240} large sway />
         </View>
 
         {/* Title */}

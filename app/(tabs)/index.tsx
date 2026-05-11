@@ -114,6 +114,7 @@ export default function HomeScreen() {
               <Card3D
                 card={featured}
                 width={200}
+                sway
                 onPress={() => router.push(`/card/${featured.id}`)}
               />
               <View style={styles.featuredMeta}>
