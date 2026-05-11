@@ -12,6 +12,9 @@ import {
   RARITY_VARIANTS,
 } from './types';
 
+// Fixed EUR→USD rate. Cardmarket prices are in EUR; all displayed values are USD.
+const EUR_TO_USD = 1.08;
+
 function mapCard(raw: CardFull, index = 0): AppCard {
   const primaryType = raw.types?.[0];
   const appType = TCGDEX_TYPE_MAP[primaryType ?? ''] ?? 'dark';
@@ -20,12 +23,21 @@ function mapCard(raw: CardFull, index = 0): AppCard {
   const foil = FOIL_RARITIES.has(rarity);
   const pricing = RARITY_VALUES[rarity] ?? { value: 8, change: 0 };
   const mult = 0.85 + (index % 9) * 0.04;
+  const cm = raw.pricing?.cardmarket;
+  const mktValue = cm?.avg != null
+    ? Math.round(cm.avg * EUR_TO_USD * 100) / 100
+    : Math.round(pricing.value * mult * 100) / 100;
+  const mktChange = cm?.avg != null && cm?.avg30 != null
+    ? Math.round((cm.avg - cm.avg30) * EUR_TO_USD * 100) / 100
+    : pricing.change;
+  const mktAvg30 = cm?.avg30 != null
+    ? Math.round(cm.avg30 * EUR_TO_USD * 100) / 100
+    : undefined;
 
   const imageUrl = raw.image ? `${raw.image}/high.webp` : undefined;
   const variant = raw.suffix ?? RARITY_VARIANTS[rarity] ?? '—';
   const totalCards = raw.set?.cardCount?.official ?? raw.set?.cardCount?.total ?? 0;
   const cardNo = totalCards > 0 ? `${raw.localId}/${totalCards}` : String(raw.localId ?? '?');
-  console.log(raw);
   return {
     id:          raw.id ?? `card-${index}`,
     name:        raw.name ?? 'Unknown',
@@ -34,8 +46,9 @@ function mapCard(raw: CardFull, index = 0): AppCard {
     no:          cardNo,
     release:     raw.set?.releaseDate ?? '—',
     rarity,
-    value:       Math.round(pricing.value * mult * 100) / 100,
-    change:      pricing.change,
+    value:       mktValue,
+    change:      mktChange,
+    avg30:       mktAvg30,
     foil,
     art,
     creature:    TYPE_CREATURES[appType] ?? '○',

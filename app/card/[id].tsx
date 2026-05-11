@@ -238,13 +238,12 @@ export default function CardDetailScreen() {
 
           <View style={styles.sourceRow}>
             {[
-              { label: 'EBAY 30D',   value: fmt(card.value * 0.94) },
-              { label: 'TCGPLAYER',  value: fmt(card.value) },
-              { label: 'PSA 10',     value: fmt(card.value * 1.8) },
+              { label: '30D AVG', value: card.avg30 != null ? fmt(card.avg30) : null },
+              { label: 'PSA 10',  value: null },
             ].map(({ label, value }) => (
               <View key={label}>
                 <Text style={styles.panelLabel}>{label}</Text>
-                <Text style={styles.sourceValue}>${value}</Text>
+                <Text style={styles.sourceValue}>{value != null ? `$${value}` : '—'}</Text>
               </View>
             ))}
           </View>
@@ -257,7 +256,6 @@ export default function CardDetailScreen() {
             ['Artist',   card.artist],
             ['Set',      card.set],
             ['Number',   card.no],
-            ['Released', card.release],
             ['Rarity',   card.rarity],
           ].map(([k, v]) => (
             <View key={k} style={styles.metaRow}>

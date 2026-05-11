@@ -35,6 +35,7 @@ export interface Card {
   rarity: string;
   value: number;
   change: number;
+  avg30?: number;
   foil: boolean;
   art: [string, string, string];
   creature: string;

@@ -8,6 +8,23 @@ export interface CardBrief {
   image?: string;
 }
 
+export interface CardmarketPrices {
+  updated?: string;
+  unit?: string;
+  avg?: number;
+  low?: number;
+  trend?: number;
+  avg1?: number;
+  avg7?: number;
+  avg30?: number;
+  'avg-holo'?: number;
+  'low-holo'?: number;
+  'trend-holo'?: number;
+  'avg1-holo'?: number;
+  'avg7-holo'?: number;
+  'avg30-holo'?: number;
+}
+
 export interface CardFull extends CardBrief {
   rarity: string;
   category: string;
@@ -22,6 +39,10 @@ export interface CardFull extends CardBrief {
     normal?: boolean;
     reverse?: boolean;
     wPromo?: boolean;
+  };
+  pricing?: {
+    cardmarket?: CardmarketPrices;
+    tcgplayer?: unknown;
   };
   set: {
     id: string;
