@@ -85,6 +85,11 @@ export function Card3D({ card, width, large = false, onPress, sway = false }: Pr
   });
 
   const swayTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Captures the sway angles at the moment a gesture begins so onUpdate can
+  // blend from them rather than jumping from the sway position to ~0 rotation.
+  const swaySnapshotRX = useRef(0);
+  const swaySnapshotRY = useRef(0);
+
   const enableSway = useCallback(() => {
     swayOn.value = 1;
     swayT0.value = -1;
@@ -152,16 +157,27 @@ export function Card3D({ card, width, large = false, onPress, sway = false }: Pr
     // Run callbacks on JS thread so Haptics can be called from onBegin.
     .runOnJS(true)
     .onBegin(() => {
-      // Pause idle sway while the user is interacting
       clearTimeout(swayTimer.current);
+      // Snapshot the current sway angles before stopping the frame callback so
+      // onUpdate can smoothly blend away from them.
+      swaySnapshotRX.current = rotateX.value;
+      swaySnapshotRY.current = rotateY.value;
       swayOn.value = 0;
       swayT0.value = -1;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       scale.value = withSpring(1.03, SPRING);
     })
     .onUpdate((e) => {
-      rotateY.value = (e.translationX / width) * MAX_TILT;
-      rotateX.value = -(e.translationY / height) * MAX_TILT;
+      const gestureRY = (e.translationX / width) * MAX_TILT;
+      const gestureRX = -(e.translationY / height) * MAX_TILT;
+      // Fade the sway offset to 0 over the first ~28 px of travel so the card
+      // glides from its sway position into gesture control instead of snapping.
+      const dist = Math.min(
+        Math.sqrt(e.translationX * e.translationX + e.translationY * e.translationY) / 28,
+        1,
+      );
+      rotateY.value = gestureRY + swaySnapshotRY.current * (1 - dist);
+      rotateX.value = gestureRX + swaySnapshotRX.current * (1 - dist);
     })
     // onFinalize runs whether the gesture ends normally OR gets cancelled by Race
     .onFinalize(() => {
