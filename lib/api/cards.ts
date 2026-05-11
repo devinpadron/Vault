@@ -51,15 +51,37 @@ async function fetchFullCards(briefs: CardBrief[]): Promise<CardFull[]> {
   return Promise.all(briefs.map(b => apiFetch<CardFull>(`/cards/${b.id}`)));
 }
 
+// Rarities with RARITY_VALUES ≥ $1,620 — all have enough API cards to paginate.
+const HIGH_VALUE_RARITIES = [
+  'Special Illustration Rare',
+  'Hyper Rare',
+  'Illustration Rare',
+  'Ultra Rare',
+  'Double Rare',
+] as const;
+
+// Subset used for the featured card — only the top 3 tiers for visual impact.
+const FEATURED_RARITIES = [
+  'Special Illustration Rare',
+  'Hyper Rare',
+  'Illustration Rare',
+] as const;
+
 export function useCards() {
+  // Seed rotates every hour, matching staleTime, so each fresh fetch picks a new combo.
+  const seed = Math.floor(Date.now() / (1000 * 60 * 60));
+  const rarity = HIGH_VALUE_RARITIES[seed % HIGH_VALUE_RARITIES.length];
+  const page   = String((Math.floor(seed / HIGH_VALUE_RARITIES.length) % 3) + 1);
+  const order  = seed % 2 === 0 ? 'ASC' : 'DESC';
+
   return useQuery<AppCard[]>({
-    queryKey: ['cards'],
+    queryKey: ['cards', rarity, page, order],
     queryFn: async () => {
       const briefs = await apiFetch<CardBrief[]>('/cards', {
-        'rarity':                  'Special Illustration Rare',
+        'rarity':                  rarity,
         'sort:field':              'localId',
-        'sort:order':              'ASC',
-        'pagination:page':         '1',
+        'sort:order':              order,
+        'pagination:page':         page,
         'pagination:itemsPerPage': '12',
       });
       const full = await fetchFullCards(briefs);
@@ -70,19 +92,27 @@ export function useCards() {
 }
 
 export function useFeaturedCard() {
+  // Seed rotates every 6 hours, matching staleTime, offset by +3 so it never
+  // picks the same rarity slot as useCards in the same hour.
+  const seed   = Math.floor(Date.now() / (1000 * 60 * 60 * 6)) + 3;
+  const rarity = FEATURED_RARITIES[seed % FEATURED_RARITIES.length];
+  const page   = String((seed % 4) + 1);
+  const order  = seed % 2 === 0 ? 'DESC' : 'ASC';
+
   return useQuery<AppCard | null>({
-    queryKey: ['featured-card'],
+    queryKey: ['featured-card', rarity, page],
     queryFn: async () => {
       const briefs = await apiFetch<CardBrief[]>('/cards', {
-        'rarity':                  'Special Illustration Rare',
+        'rarity':                  rarity,
         'sort:field':              'localId',
-        'sort:order':              'DESC',
-        'pagination:page':         '1',
-        'pagination:itemsPerPage': '1',
+        'sort:order':              order,
+        'pagination:page':         page,
+        'pagination:itemsPerPage': '10',
       });
       if (!briefs.length) return null;
-      const full = await apiFetch<CardFull>(`/cards/${briefs[0].id}`);
-      return mapCard(full, 11);
+      const pick = briefs[seed % briefs.length];
+      const full = await apiFetch<CardFull>(`/cards/${pick.id}`);
+      return mapCard(full, seed % 12);
     },
     staleTime: 1000 * 60 * 60 * 6,
   });
