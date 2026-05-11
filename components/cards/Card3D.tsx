@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSharedValue, withSpring, useDerivedValue } from 'react-native-reanimated';
 import {
@@ -122,7 +123,10 @@ export function Card3D({ card, width, large = false, onPress }: Props) {
     // Alternative activation: holding still for 400 ms also unlocks 3D tilt
     // without needing horizontal movement first.
     .activateAfterLongPress(400)
+    // Run callbacks on JS thread so Haptics can be called from onBegin.
+    .runOnJS(true)
     .onBegin(() => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       scale.value = withSpring(1.03, SPRING);
     })
     .onUpdate((e) => {

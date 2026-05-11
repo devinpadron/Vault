@@ -1,4 +1,5 @@
 import { ScrollView, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Colors, FontFamily, Radius } from '@/constants/theme';
 
 interface Props {
@@ -19,7 +20,10 @@ export function FilterPills({ options, value, onChange }: Props) {
         return (
           <TouchableOpacity
             key={opt}
-            onPress={() => onChange(opt)}
+            onPress={() => {
+              Haptics.selectionAsync();
+              onChange(opt);
+            }}
             style={[styles.pill, active && styles.pillActive]}
           >
             <Text style={[styles.label, active && styles.labelActive]}>{opt}</Text>

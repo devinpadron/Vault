@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
@@ -18,6 +19,19 @@ import { MOCK_DATA } from '@/data/mock';
 import { Colors, FontFamily, Radius } from '@/constants/theme';
 
 type Phase = 'scanning' | 'identified';
+
+/** Rapid multi-impact burst that mirrors the visual confetti pop. */
+async function playConfettiBurst() {
+  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  await new Promise<void>(r => setTimeout(r, 55));
+  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  await new Promise<void>(r => setTimeout(r, 65));
+  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+  await new Promise<void>(r => setTimeout(r, 50));
+  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  await new Promise<void>(r => setTimeout(r, 70));
+  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+}
 
 const RETICLE_W = 240;
 const RETICLE_H = 336;
@@ -91,6 +105,7 @@ export default function ScannerScreen() {
 
     const t = setTimeout(() => {
       setPhase('identified');
+      playConfettiBurst();
       particleProgress.value = withTiming(1, {
         duration: 700,
         easing: Easing.out(Easing.quad),
@@ -112,6 +127,7 @@ export default function ScannerScreen() {
   }));
 
   const handleRescan = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setPhase('scanning');
     setScanCount(c => c + 1);
   };
@@ -216,6 +232,10 @@ export default function ScannerScreen() {
               onPress={() => router.back()}
               accessibilityLabel="Add card to collection"
               accessibilityRole="button"
+              onPress={() => {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                router.back();
+              }}
             >
               <Text style={styles.addBtnText}>Add to collection</Text>
             </TouchableOpacity>

@@ -1,5 +1,6 @@
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
@@ -33,7 +34,11 @@ export default function BindersScreen() {
             <Text style={styles.titleAccent}>Binders</Text>
           </Text>
         </View>
-        <TouchableOpacity style={styles.addBtn} accessibilityLabel="New binder">
+        <TouchableOpacity
+          style={styles.addBtn}
+          accessibilityLabel="New binder"
+          onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+        >
           <Icon name="plus" size={18} color={Colors.text} />
         </TouchableOpacity>
       </View>
