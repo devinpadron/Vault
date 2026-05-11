@@ -13,6 +13,7 @@ import { useNews } from '@/lib/api/news';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
 import { NewsItem } from '@/types';
+import { cardBaseName, cardNameVariant } from '@/types';
 
 const STATS = { value: 84320, count: 412, change24h: 982.40 };
 
@@ -119,8 +120,10 @@ export default function HomeScreen() {
               />
               <View style={styles.featuredMeta}>
                 <Text style={styles.featuredName}>
-                  {featured.name}{' '}
-                  <Text style={styles.featuredVariant}>{featured.variant}</Text>
+                  {cardBaseName(featured.name)}
+                  {cardNameVariant(featured.name) && (
+                    <Text style={styles.featuredVariant}> {cardNameVariant(featured.name)}</Text>
+                  )}
                 </Text>
                 <Text style={[styles.mono, { fontSize: 10, color: Colors.text2, marginTop: 6, letterSpacing: 1.6 }]}>
                   {featured.set} · {featured.no}

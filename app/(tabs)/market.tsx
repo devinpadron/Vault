@@ -25,7 +25,7 @@ import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { useListings, useLiveLot } from '@/lib/api/market';
 import { useFriends } from '@/lib/api/friends';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
-import { Listing } from '@/types';
+import { Listing, cardBaseName, cardNameVariant } from '@/types';
 
 type SubView = 'listings' | 'live';
 
@@ -130,8 +130,10 @@ function ListingRow({ listing, index }: { listing: Listing; index: number }) {
 
         <View style={styles.listingInfo}>
           <Text style={styles.listingName}>
-            {listing.card.name}{' '}
-            <Text style={styles.listingVariant}>{listing.card.variant}</Text>
+            {cardBaseName(listing.card.name)}
+            {cardNameVariant(listing.card.name) && (
+              <Text style={styles.listingVariant}> {cardNameVariant(listing.card.name)}</Text>
+            )}
           </Text>
           <Text style={styles.listingSet}>
             {listing.card.set} · {listing.card.no}
@@ -271,8 +273,10 @@ function Live() {
       <View style={styles.lotPanel}>
         <Text style={styles.lotEyebrow}>Current lot · 04 of 12</Text>
         <Text style={styles.lotCardName}>
-          {card?.name ?? '—'}{' '}
-          <Text style={styles.lotCardVariant}>{card?.variant ?? ''}</Text>
+          {card ? cardBaseName(card.name) : '—'}
+          {card && cardNameVariant(card.name) && (
+            <Text style={styles.lotCardVariant}> {cardNameVariant(card.name)}</Text>
+          )}
         </Text>
 
         <View style={styles.bidRow}>

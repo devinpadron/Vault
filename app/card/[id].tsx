@@ -25,7 +25,7 @@ import { Icon } from '@/components/ui/Icon';
 import { useCard, useCardPriceHistory } from '@/lib/api/cards';
 import { useBinders, useAddCardToBinder } from '@/lib/api/binders';
 import { Colors, FontFamily, Spacing, Radius } from '@/constants/theme';
-import { CardVariants } from '@/types';
+import { CardVariants, cardBaseName, cardNameVariant } from '@/types';
 
 type Range = '1W' | '1M' | '6M' | '1Y' | 'ALL';
 
@@ -185,8 +185,10 @@ export default function CardDetailScreen() {
         <View style={styles.titleSection}>
           <Text style={styles.setLabel}>{card.set} · {card.no}</Text>
           <Text style={styles.cardName}>
-            {card.name}{' '}
-            <Text style={styles.cardVariant}>{card.variant}</Text>
+            {cardBaseName(card.name)}
+            {cardNameVariant(card.name) && (
+              <Text style={styles.cardVariant}> {cardNameVariant(card.name)}</Text>
+            )}
           </Text>
           <View style={styles.chips}>
             {card.foil

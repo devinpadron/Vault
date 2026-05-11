@@ -9,7 +9,7 @@ import { FilterPills } from '@/components/ui/FilterPills';
 import { Icon } from '@/components/ui/Icon';
 import { useCards } from '@/lib/api/cards';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
-import { Card } from '@/types';
+import { Card, cardBaseName, cardNameVariant } from '@/types';
 
 const FILTERS = ['All', 'Foil', 'Set', 'Rarity', 'Value'];
 
@@ -31,8 +31,10 @@ function CardCell({ card, index }: { card: Card; index: number }) {
       />
       <View style={styles.cellMeta}>
         <Text style={styles.cardName} numberOfLines={1}>
-          {card.name}{' '}
-          <Text style={styles.cardVariant}>{card.variant}</Text>
+          {cardBaseName(card.name)}
+          {cardNameVariant(card.name) && (
+            <Text style={styles.cardVariant}> {cardNameVariant(card.name)}</Text>
+          )}
         </Text>
         <View style={styles.priceRow}>
           <Text style={styles.price}>${fmt(card.value)}</Text>

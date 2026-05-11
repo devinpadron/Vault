@@ -17,6 +17,7 @@ import { Card3D } from '@/components/cards/Card3D';
 import { Icon } from '@/components/ui/Icon';
 import { MOCK_DATA } from '@/data/mock';
 import { Colors, FontFamily, Radius } from '@/constants/theme';
+import { cardBaseName, cardNameVariant } from '@/types';
 
 type Phase = 'scanning' | 'identified';
 
@@ -210,8 +211,10 @@ export default function ScannerScreen() {
           <Text style={styles.confidence}>97.4% · MATCH</Text>
           <View style={styles.resultMeta}>
             <Text style={styles.resultName}>
-              {IDENTIFIED_CARD.name}{' '}
-              <Text style={styles.resultVariant}>{IDENTIFIED_CARD.variant}</Text>
+              {cardBaseName(IDENTIFIED_CARD.name)}
+              {cardNameVariant(IDENTIFIED_CARD.name) && (
+                <Text style={styles.resultVariant}> {cardNameVariant(IDENTIFIED_CARD.name)}</Text>
+              )}
             </Text>
             <Text style={styles.resultSet}>
               {IDENTIFIED_CARD.set} · {IDENTIFIED_CARD.no}
