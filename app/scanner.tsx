@@ -229,7 +229,6 @@ export default function ScannerScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.addBtn}
-              onPress={() => router.back()}
               accessibilityLabel="Add card to collection"
               accessibilityRole="button"
               onPress={() => {
