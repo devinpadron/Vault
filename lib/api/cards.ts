@@ -1,7 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { Card as AppCard } from '@/types';
 import { SupabaseCard, mapRow, HIGH_VALUE_RARITIES, FEATURED_RARITIES } from './types';
+import { getCardPricing, CardPricing } from './pricing';
 
 const TABLE = 'pokemon_cards';
 
@@ -63,53 +64,76 @@ const FILTER_COLUMN: Record<string, string> = {
   'Rarity':   'rarity',
 };
 
-export function useSearchCards(query: string, filter = 'Name') {
+export type SortField = 'relevance' | 'price' | 'release' | 'number';
+export type SortDir   = 'asc' | 'desc';
+
+const PAGE_SIZE = 24;
+const PRICE_SORT_LIMIT = 200;
+
+export function useSearchCards(
+  query: string,
+  filter = 'Name',
+  sort: { field: SortField; dir: SortDir } = { field: 'relevance', dir: 'desc' },
+) {
   const col = FILTER_COLUMN[filter] ?? 'name';
 
-  return useQuery<AppCard[]>({
-    queryKey: ['search', query, filter],
-    queryFn: async () => {
-      const { data, error } = await supabase
+  return useInfiniteQuery<AppCard[]>({
+    queryKey: ['search', query, filter, sort.field, sort.dir],
+    queryFn: async ({ pageParam }) => {
+      const page = pageParam as number;
+
+      let q = supabase
         .from(TABLE)
         .select(COLS)
         .ilike(col, `%${query}%`)
-        .not('image_url', 'is', null)
-        .order('rarity', { ascending: false })
-        .limit(24);
+        .not('image_url', 'is', null);
 
+      if (sort.field === 'price') {
+        // Price is rarity-derived — fetch a large batch for correct global ordering
+        q = (q.order('rarity', { ascending: false }) as typeof q).limit(PRICE_SORT_LIMIT);
+      } else if (sort.field === 'release') {
+        q = (q.order('release_date', { ascending: sort.dir === 'asc' }) as typeof q)
+          .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+      } else if (sort.field === 'number') {
+        q = (q.order('card_number', { ascending: sort.dir === 'asc' }) as typeof q)
+          .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+      } else {
+        q = (q.order('rarity', { ascending: false }) as typeof q)
+          .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+      }
+
+      const { data, error } = await q;
       if (error) throw new Error(error.message);
-      return (data as unknown as SupabaseCard[]).map(mapRow);
+      const offset = sort.field === 'price' ? 0 : page * PAGE_SIZE;
+      return (data as unknown as SupabaseCard[]).map((row, i) => mapRow(row, offset + i));
+    },
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      if (sort.field === 'price') return undefined;
+      return lastPage.length === PAGE_SIZE ? allPages.length : undefined;
     },
     enabled: query.trim().length >= 2,
     staleTime: 1000 * 60 * 10,
   });
 }
 
-function genPriceHistory(baseValue: number, range: string, seed: number): number[] {
-  const counts:  Record<string, number> = { '1W': 8, '1M': 30, '6M': 26, '1Y': 52, 'ALL': 60 };
-  const spreads: Record<string, number> = { '1W': 0.06, '1M': 0.15, '6M': 0.30, '1Y': 0.50, 'ALL': 0.70 };
-  const n = counts[range] ?? 30;
-  const spread = spreads[range] ?? 0.15;
-  let v = baseValue * (1 - spread * 0.8);
-  const arr: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const progress = (i + 1) / n;
-    const noise = Math.sin(i * 1.3 + seed) * spread * baseValue * 0.15;
-    v = v + (baseValue - v) * (0.05 + progress * 0.03) + noise;
-    arr.push(Math.round(Math.max(baseValue * 0.05, v)));
-  }
-  arr.push(baseValue);
-  return arr;
+// Portfolio-level history is not backed by JustTCG; returns empty so callers degrade gracefully.
+export function useCardPriceHistory(_id: string, _range: string, _baseValue = 1000) {
+  return useQuery<number[]>({
+    queryKey: ['price-history-stub'],
+    queryFn: () => Promise.resolve([]),
+    staleTime: Infinity,
+  });
 }
 
-export function useCardPriceHistory(id: string, range: string, baseValue = 1000) {
-  return useQuery<number[]>({
-    queryKey: ['price-history', id, range],
+export function useCardPricing(card: AppCard | null | undefined) {
+  return useQuery<CardPricing | null>({
+    queryKey: ['card-pricing', card?.id],
     queryFn: () => {
-      const seed = id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-      return Promise.resolve(genPriceHistory(baseValue, range, seed));
+      if (!card) return Promise.resolve(null);
+      return getCardPricing(card.id, card.set, card.name, card.no, card.rarity);
     },
-    staleTime: Infinity,
-    enabled: !!id,
+    staleTime: 1000 * 60 * 60 * 24,
+    enabled: !!card?.id,
   });
 }

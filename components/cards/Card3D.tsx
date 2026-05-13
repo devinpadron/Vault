@@ -126,24 +126,6 @@ export function Card3D({ card, width, large = false, onPress, sway = false }: Pr
     ] as Transforms3d);
   }, [rotateX, rotateY, scale]);
 
-  // Foil shimmer offset — slides the oversized gradient layer with the tilt angle.
-  const shimmerTransform = useDerivedValue((): Transforms3d => {
-    'worklet';
-    return [
-      { translateX: (rotateY.value / MAX_TILT) * width * 0.3 },
-      { translateY: (-rotateX.value / MAX_TILT) * height * 0.3 },
-    ];
-  }, [rotateX, rotateY]);
-
-  const shimmerOpacity = useDerivedValue(
-    () =>
-      Math.min(
-        ((Math.abs(rotateX.value) + Math.abs(rotateY.value)) / (MAX_TILT * 2)) * 1.4,
-        1,
-      ),
-    [rotateX, rotateY],
-  );
-
   const pan = Gesture.Pan()
     // Give the scroll list a head-start: if the finger moves more than 10px
     // vertically before crossing 6px horizontally, this gesture fails and the

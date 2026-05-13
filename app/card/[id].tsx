@@ -22,7 +22,8 @@ import Animated, {
 import { Card3D } from '@/components/cards/Card3D';
 import { PriceChart } from '@/components/charts/PriceChart';
 import { Icon } from '@/components/ui/Icon';
-import { useCard, useCardPriceHistory } from '@/lib/api/cards';
+import { useCard, useCardPricing } from '@/lib/api/cards';
+import { sliceHistoryForRange, changForRange, avgForRange } from '@/lib/api/pricing';
 import { useBinders, useAddCardToBinder, useCreateBinder } from '@/lib/api/binders';
 import { useIsInCollection, useAddToCollection, useRemoveFromCollection } from '@/lib/db/collection';
 import { Colors, FontFamily, Spacing, Radius } from '@/constants/theme';
@@ -105,7 +106,15 @@ export default function CardDetailScreen() {
   const insets = useSafeAreaInsets();
 
   const { data: card, isLoading: cardLoading } = useCard(id ?? '');
-  const { data: priceHistory = [] } = useCardPriceHistory(id ?? '', range, card?.value ?? 1000);
+  const { data: pricing } = useCardPricing(card);
+  const showMinMax = range === '1Y' || range === 'ALL';
+  const priceHistory = showMinMax ? [] : sliceHistoryForRange(pricing?.price_history ?? [], range);
+  const minMax = showMinMax ? {
+    low:          range === '1Y' ? (pricing?.min_1y ?? null)       : (pricing?.min_all_time ?? null),
+    high:         range === '1Y' ? (pricing?.max_1y ?? null)       : (pricing?.max_all_time ?? null),
+    label:        range === '1Y' ? '52W' : 'ALL TIME',
+    currentPrice: pricing?.price_usd ?? null,
+  } : null;
   const { data: binders = [] } = useBinders();
   const addCardToBinder = useAddCardToBinder();
   const createBinder = useCreateBinder();
@@ -137,7 +146,9 @@ export default function CardDetailScreen() {
   if (cardLoading) return null;
   if (!card) return null;
 
-  const pct = ((card.change / card.value) * 100).toFixed(1);
+  const price = pricing?.price_usd ?? null;
+  const { value: changeValue, label: changeLabel } = changForRange(pricing, range);
+  const { value: avgValue, label: avgLabel } = avgForRange(pricing, range);
 
   return (
     <View style={styles.root}>
@@ -199,51 +210,53 @@ export default function CardDetailScreen() {
           <View style={styles.priceHeader}>
             <View>
               <Text style={styles.panelLabel}>Market Price</Text>
-              <View style={styles.priceValue}>
-                <Text style={styles.priceDollar}>$</Text>
-                <Text style={styles.priceNumber}>{fmt(card.value)}</Text>
-              </View>
-            </View>
-            <View style={styles.changeBox}>
-              <Text style={styles.panelLabel}>30d</Text>
-              <View style={styles.changeRow}>
-                <Icon
-                  name={card.change >= 0 ? 'arrow-up' : 'arrow-down'}
-                  size={12}
-                  color={card.change >= 0 ? Colors.up : Colors.down}
-                />
-                <Text style={[styles.changePct, { color: card.change >= 0 ? Colors.up : Colors.down }]}>
-                  {card.change >= 0 ? '+' : ''}{pct}%
+              {price != null ? (
+                <View style={styles.priceValue}>
+                  <Text style={styles.priceDollar}>$</Text>
+                  <Text style={styles.priceNumber}>{fmt(price)}</Text>
+                </View>
+              ) : (
+                <Text style={styles.priceNumber}>—</Text>
+              )}
+              {!showMinMax && avgValue != null && (
+                <Text style={styles.avgInline}>
+                  {avgLabel} · ${fmt(avgValue)}
                 </Text>
-              </View>
+              )}
             </View>
-          </View>
-
-          <PriceChart data={priceHistory} range={range} onRangeChange={setRange} />
-
-          <View style={styles.divider} />
-
-          <View style={styles.sourceRow}>
-            {[
-              { label: '30D AVG', value: card.avg30 != null ? fmt(card.avg30) : null },
-              { label: 'PSA 10',  value: null },
-            ].map(({ label, value }) => (
-              <View key={label}>
-                <Text style={styles.panelLabel}>{label}</Text>
-                <Text style={styles.sourceValue}>{value != null ? `$${value}` : '—'}</Text>
+            {!showMinMax && (
+              <View style={styles.changeBox}>
+                <Text style={styles.panelLabel}>{changeLabel}</Text>
+                {changeValue != null ? (
+                  <View style={styles.changeRow}>
+                    <Icon
+                      name={changeValue >= 0 ? 'arrow-up' : 'arrow-down'}
+                      size={12}
+                      color={changeValue >= 0 ? Colors.up : Colors.down}
+                    />
+                    <Text style={[styles.changePct, { color: changeValue >= 0 ? Colors.up : Colors.down }]}>
+                      {changeValue >= 0 ? '+' : ''}{Math.abs(changeValue).toFixed(1)}%
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.changePct}>—</Text>
+                )}
               </View>
-            ))}
+            )}
           </View>
+
+          <PriceChart data={priceHistory} range={range} onRangeChange={setRange} minMax={minMax} />
         </View>
 
         {/* Card info */}
         <View style={[styles.metaPanel, { marginBottom: 20 }]}>
-          <Text style={[styles.panelLabel, { marginBottom: 10 }]}>Card Info</Text>
+          <Text style={styles.metaHeader}>Card Info</Text>
           {[
             ['Artist',   card.artist],
             ['Set',      card.set],
             ['Number',   card.no],
             ['Rarity',   card.rarity],
+            ['Released', card.release],
           ].map(([k, v]) => (
             <View key={k} style={styles.metaRow}>
               <Text style={styles.metaKey}>{k}</Text>
@@ -553,6 +566,13 @@ const styles = StyleSheet.create({
     color: Colors.text3,
     marginBottom: 6,
   },
+  avgInline: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    color: Colors.text3,
+    letterSpacing: 0.5,
+    marginTop: 4,
+  },
   priceValue: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -603,6 +623,16 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: Colors.line,
+  },
+  metaHeader: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 1.6,
+    textTransform: 'uppercase',
+    color: Colors.text3,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 8,
   },
   metaRow: {
     flexDirection: 'row',

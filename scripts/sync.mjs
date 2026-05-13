@@ -4,12 +4,14 @@
  *
  * Phase 1 — Sync all TCGDex physical sets into Supabase
  * Phase 2 — Fill missing images via pokemontcg.io
+ * Phase 3 — Revalidate existing ptcgio images by name (fix wrong cards)
  *
  * Usage:
- *   node sync.mjs                  # full sync
+ *   node sync.mjs                  # full sync (phases 1 + 2)
  *   node sync.mjs --dry-run        # preview, no DB writes
  *   node sync.mjs --verbose        # per-card detail
- *   node sync.mjs --phase 2        # run one phase only (1 or 2)
+ *   node sync.mjs --phase 3        # revalidate ptcgio images only
+ *   node sync.mjs --phase 2,3      # fill missing + revalidate
  *   node sync.mjs --set swsh1      # Phase 1 for one set (debug)
  */
 
@@ -59,7 +61,7 @@ const SET_FILTER = argv.includes('--set') ? argv[argv.indexOf('--set') + 1] : nu
 const PHASE_ARG  = argv.includes('--phase') ? argv[argv.indexOf('--phase') + 1] : null;
 const RUN_PHASES = PHASE_ARG
   ? new Set(PHASE_ARG.split(',').map(Number))
-  : new Set([1, 2, 3]);
+  : new Set([1, 2]);
 
 // ─────────────────────────────────────────────────────────────
 // Config
@@ -152,6 +154,11 @@ function chunks(arr, size) {
   return out;
 }
 
+function nameMatch(a, b) {
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return norm(a) === norm(b);
+}
+
 // ─────────────────────────────────────────────────────────────
 // Phase 1 — Sync TCGDex sets
 // ─────────────────────────────────────────────────────────────
@@ -215,10 +222,11 @@ async function syncSet(setData, ptcgHeaders) {
     await withConcurrency(needPtcg, async ({ card, idx }) => {
       const q = `name:"${card.name}" set.name:"${setData.name}"`;
       const data = await fetchJSON(
-        `${PTCGIO_BASE}/cards?q=${encodeURIComponent(q)}&pageSize=1&select=images`,
+        `${PTCGIO_BASE}/cards?q=${encodeURIComponent(q)}&pageSize=5&select=images,name`,
         ptcgHeaders,
       );
-      const url = data?.data?.[0]?.images?.large ?? null;
+      const match = data?.data?.find(c => nameMatch(c.name, card.name));
+      const url = match?.images?.large ?? null;
       rows[idx] = buildRow(card, setData, url, url ? 'ptcgio' : 'none');
     }, 5);
   }
@@ -298,9 +306,12 @@ const setInfoCache = new Map();
 async function getSetInfo(setId, setName) {
   if (setInfoCache.has(setId)) return setInfoCache.get(setId);
 
+  // ptcgio drops dots from set IDs (e.g. TCGDex "sm7.5" → ptcgio "sm75")
+  const ptcgId = setId.replace(/\./g, '');
+
   const [tcgSet, ptcgDirect, ptcgByName] = await Promise.all([
     fetchJSON(`${TCGDEX_BASE}/sets/${setId}`),
-    fetchJSON(`${PTCGIO_BASE}/sets/${setId}?select=id`, PTCGIO_HDR),
+    fetchJSON(`${PTCGIO_BASE}/sets/${ptcgId}?select=id`, PTCGIO_HDR),
     fetchJSON(
       `${PTCGIO_BASE}/sets?q=${encodeURIComponent(`name:"${setName}"`)}&select=id`,
       PTCGIO_HDR,
@@ -339,9 +350,9 @@ async function lookupImage(card) {
     const variants  = [...new Set([localId, stripped, noSuffix].filter(v => v && v !== 'NaN'))];
 
     for (const v of variants) {
-      const data = await fetchJSON(`${PTCGIO_BASE}/cards/${ptcgSetId}-${v}?select=images`, PTCGIO_HDR);
+      const data = await fetchJSON(`${PTCGIO_BASE}/cards/${ptcgSetId}-${v}?select=images,name`, PTCGIO_HDR);
       const url  = data?.data?.images?.large ?? null;
-      if (url) return { url, source: 'ptcgio', s: 2 };
+      if (url && nameMatch(name, data.data.name ?? '')) return { url, source: 'ptcgio', s: 2 };
     }
   }
 
@@ -429,6 +440,122 @@ async function phase2() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Phase 3 — Revalidate existing ptcgio images
+// ─────────────────────────────────────────────────────────────
+
+async function phase3() {
+  console.log('\n── Phase 3: Revalidate ptcgio images ─────────────────────');
+
+  const { count } = await db
+    .from(TABLE)
+    .select('id', { count: 'exact', head: true })
+    .eq('image_source', 'ptcgio');
+
+  console.log(`  Cards with ptcgio-sourced images: ${count}`);
+  if (!count) { console.log('  Nothing to validate.'); return 0; }
+
+  const { data: affectedSets } = await db
+    .from(TABLE)
+    .select('set_id, set_name')
+    .eq('image_source', 'ptcgio');
+
+  const uniqueSets = [...new Map((affectedSets ?? []).map(r => [r.set_id, r])).values()];
+  process.stdout.write(`  Pre-loading ${uniqueSets.length} set info records... `);
+  await withConcurrency(uniqueSets, ({ set_id, set_name }) => getSetInfo(set_id, set_name), 8);
+  console.log('done\n');
+
+  let offset = 0, processed = 0;
+  const tally = { ok: 0, fixed: 0, noMatch: 0, errors: 0 };
+
+  while (processed < count) {
+    const { data: batch, error } = await db
+      .from(TABLE)
+      .select('id, name, set_id, set_name, card_number, image_url')
+      .eq('image_source', 'ptcgio')
+      .range(offset, offset + 499)
+      .order('set_id').order('id');
+
+    if (error) throw new Error(`Phase 3 query: ${error.message}`);
+    if (!batch?.length) break;
+
+    await withConcurrency(batch, async (card, bi) => {
+      const n = processed + bi + 1;
+      const localId = extractLocalId(card.card_number, card.id);
+      const { ptcgSetId } = await getSetInfo(card.set_id, card.set_name);
+
+      if (VERBOSE) process.stdout.write(`  [${n}/${count}] ${card.name} (${card.set_id} #${localId})... `);
+
+      // Fetch the authoritative ptcgio card using the correctly resolved set ID.
+      // We need both name (to confirm it's the right card) and the image URL
+      // (to detect cases where the stored URL points to the wrong set, e.g. sm7 vs sm75).
+      let correctUrl = null;
+      if (ptcgSetId) {
+        const stripped = String(parseInt(localId, 10));
+        const variants = [...new Set([localId, stripped].filter(v => v && v !== 'NaN'))];
+        for (const v of variants) {
+          const data = await fetchJSON(`${PTCGIO_BASE}/cards/${ptcgSetId}-${v}?select=images,name`, PTCGIO_HDR);
+          if (data?.data?.name && nameMatch(card.name, data.data.name)) {
+            correctUrl = data.data.images?.large ?? null;
+            break;
+          }
+        }
+      }
+
+      if (correctUrl && correctUrl === card.image_url) {
+        tally.ok++;
+        if (VERBOSE) console.log('✓ ok');
+        return;
+      }
+
+      if (correctUrl) {
+        // URL is wrong (e.g. stored sm7/37 instead of sm75/37) — fix directly
+        tally.fixed++;
+        if (VERBOSE) console.log(`✓ url corrected`);
+        if (!DRY_RUN) {
+          await db.from(TABLE)
+            .update({ image_url: correctUrl, updated_at: new Date().toISOString() })
+            .eq('id', card.id);
+        }
+        return;
+      }
+
+      // No direct match found — fall back to full lookup
+      if (VERBOSE) process.stdout.write('no direct match — relooking... ');
+
+      let result = null;
+      try { result = await lookupImage(card); }
+      catch (err) { tally.errors++; if (VERBOSE) console.log(`ERROR: ${err.message}`); return; }
+
+      if (!result) {
+        tally.noMatch++;
+        if (VERBOSE) console.log('no match found — clearing');
+        if (!DRY_RUN) {
+          await db.from(TABLE)
+            .update({ image_url: null, image_source: null, updated_at: new Date().toISOString() })
+            .eq('id', card.id);
+        }
+        return;
+      }
+
+      tally.fixed++;
+      if (VERBOSE) console.log(`✓ fixed via ${STRAT[result.s]}`);
+      if (!DRY_RUN) {
+        await db.from(TABLE)
+          .update({ image_url: result.url, image_source: result.source, updated_at: new Date().toISOString() })
+          .eq('id', card.id);
+      }
+    }, IMG_CONCUR);
+
+    processed += batch.length;
+    offset    += batch.length;
+    if (!VERBOSE) process.stdout.write(`  ${processed}/${count}\r`);
+  }
+
+  console.log(`\n  OK: ${tally.ok}  Fixed: ${tally.fixed}  No match: ${tally.noMatch}  Errors: ${tally.errors}`);
+  return tally.fixed;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────────
 
@@ -445,6 +572,7 @@ async function main() {
 
   if (RUN_PHASES.has(1)) await phase1();
   if (RUN_PHASES.has(2)) await phase2();
+  if (RUN_PHASES.has(3)) await phase3();
 
   const secs = Math.round((Date.now() - start) / 1000);
   console.log(`\n  Done in ${Math.floor(secs / 60)}m ${secs % 60}s.`);

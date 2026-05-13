@@ -1,15 +1,25 @@
-import { useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView } from 'react-native';
+import { useMemo, useState } from 'react';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import { CardThumb } from '@/components/cards/CardThumb';
 import { SkeletonCard } from '@/components/ui/SkeletonCard';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { Icon } from '@/components/ui/Icon';
-import { useSearchCards } from '@/lib/api/cards';
+import { useSearchCards, SortField, SortDir } from '@/lib/api/cards';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 
-const FILTERS = ['Name', 'Set/Pack', 'Pokémon', 'Artist', 'Release', 'Rarity'];
+const FILTERS = ['Name', 'Set/Pack', 'Artist', 'Rarity'];
+
+const SORT_OPTIONS: { field: SortField; dir: SortDir; label: string; icon: 'arrow-up' | 'arrow-down' }[] = [
+  { field: 'price',   dir: 'desc', label: 'Price: High → Low', icon: 'arrow-down' },
+  { field: 'price',   dir: 'asc',  label: 'Price: Low → High', icon: 'arrow-up'   },
+  { field: 'release', dir: 'desc', label: 'Release: Newest',   icon: 'arrow-down' },
+  { field: 'release', dir: 'asc',  label: 'Release: Oldest',   icon: 'arrow-up'   },
+  { field: 'number',  dir: 'asc',  label: 'Card #: Ascending', icon: 'arrow-up'   },
+  { field: 'number',  dir: 'desc', label: 'Card #: Descending',icon: 'arrow-down' },
+];
 
 function fmt(n: number) {
   if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -19,9 +29,35 @@ function fmt(n: number) {
 export default function SearchScreen() {
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('Name');
+  const [sort, setSort] = useState<{ field: SortField; dir: SortDir }>({ field: 'relevance', dir: 'desc' });
+  const [sortOpen, setSortOpen] = useState(false);
   const insets = useSafeAreaInsets();
 
-  const { data: results = [], isFetching, isError, refetch } = useSearchCards(query, activeFilter);
+  const {
+    data,
+    isFetching,
+    isFetchingNextPage,
+    isError,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+  } = useSearchCards(query, activeFilter, sort);
+
+  const results = useMemo(() => data?.pages.flat() ?? [], [data]);
+
+  // release/number/relevance are sorted server-side; only price needs client-side sort
+  const sortedResults = useMemo(() => {
+    if (sort.field !== 'price' || !results.length) return results;
+    return [...results].sort((a, b) => {
+      const cmp = a.value - b.value;
+      return sort.dir === 'asc' ? cmp : -cmp;
+    });
+  }, [results, sort]);
+
+  const activeSortOption = SORT_OPTIONS.find(o => o.field === sort.field && o.dir === sort.dir);
+  const sortLabel = activeSortOption
+    ? activeSortOption.label.split(':')[0]
+    : 'Sort';
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top + 16 }]}>
@@ -52,6 +88,7 @@ export default function SearchScreen() {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={styles.pillsScroll}
         contentContainerStyle={styles.pillsRow}
       >
         {FILTERS.map(f => {
@@ -72,6 +109,13 @@ export default function SearchScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
+        scrollEventThrottle={200}
+        onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
+          const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
+          if (distanceFromBottom < 300 && hasNextPage && !isFetchingNextPage) {
+            fetchNextPage();
+          }
+        }}
       >
         {isError && <ErrorPanel onRetry={refetch} />}
 
@@ -80,9 +124,20 @@ export default function SearchScreen() {
           <Text style={styles.sectionLabel}>
             {query.trim().length >= 2 ? `${results.length} results` : 'Start typing to search'}
           </Text>
-          {isFetching && query.trim().length >= 2 && (
-            <Text style={styles.live}>● LIVE</Text>
-          )}
+          <View style={styles.headerRight}>
+            {isFetching && query.trim().length >= 2 && (
+              <Text style={styles.live}>● LIVE</Text>
+            )}
+            <TouchableOpacity
+              onPress={() => { Haptics.selectionAsync(); setSortOpen(true); }}
+              style={[styles.sortPill, sort.field !== 'relevance' && styles.sortPillActive]}
+            >
+              <Icon name="sort" size={10} color={sort.field !== 'relevance' ? Colors.gold : Colors.text2} />
+              <Text style={[styles.sortPillText, sort.field !== 'relevance' && styles.sortPillTextActive]}>
+                {sortLabel}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Skeleton while loading */}
@@ -93,13 +148,13 @@ export default function SearchScreen() {
         )}
 
         {/* Results grid */}
-        {results.length > 0 && (
+        {sortedResults.length > 0 && (
           <View style={styles.grid}>
-            {results.map((card, i) => (
+            {sortedResults.map((card, i) => (
               <TouchableOpacity
                 key={`${card.id}-${i}`}
                 style={styles.gridCell}
-                onPress={() => { router.back(); router.push(`/card/${card.id}`); }}
+                onPress={() => router.push(`/card/${card.id}`)}
               >
                 <CardThumb card={card} width={104} />
                 <Text style={styles.gridName} numberOfLines={1}>{card.name}</Text>
@@ -108,7 +163,49 @@ export default function SearchScreen() {
             ))}
           </View>
         )}
+
+        {isFetchingNextPage && (
+          <ActivityIndicator style={styles.loadingMore} color={Colors.gold} />
+        )}
       </ScrollView>
+
+      {/* Sort modal */}
+      <Modal visible={sortOpen} transparent animationType="slide" onRequestClose={() => setSortOpen(false)}>
+        <Pressable style={styles.overlay} onPress={() => setSortOpen(false)} />
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <View style={styles.sheetHandle} />
+          <Text style={styles.sheetTitle}>Sort Results</Text>
+
+          <TouchableOpacity
+            style={[styles.sheetOption, sort.field === 'relevance' && styles.sheetOptionActive]}
+            onPress={() => { Haptics.selectionAsync(); setSort({ field: 'relevance', dir: 'desc' }); setSortOpen(false); }}
+          >
+            <Text style={[styles.sheetOptionText, sort.field === 'relevance' && styles.sheetOptionTextActive]}>
+              Relevance
+            </Text>
+            {sort.field === 'relevance' && <Icon name="check" size={12} color={Colors.gold} />}
+          </TouchableOpacity>
+
+          {SORT_OPTIONS.map(opt => {
+            const active = sort.field === opt.field && sort.dir === opt.dir;
+            return (
+              <TouchableOpacity
+                key={`${opt.field}-${opt.dir}`}
+                style={[styles.sheetOption, active && styles.sheetOptionActive]}
+                onPress={() => { Haptics.selectionAsync(); setSort({ field: opt.field, dir: opt.dir }); setSortOpen(false); }}
+              >
+                <View style={styles.sheetOptionLeft}>
+                  <Icon name={opt.icon} size={12} color={active ? Colors.gold : Colors.text3} />
+                  <Text style={[styles.sheetOptionText, active && styles.sheetOptionTextActive]}>
+                    {opt.label}
+                  </Text>
+                </View>
+                {active && <Icon name="check" size={12} color={Colors.gold} />}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -147,6 +244,11 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.body,
     fontSize: 14,
     color: Colors.text2,
+  },
+  pillsScroll: {
+    height: 52,
+    flexShrink: 0,
+    flexGrow: 0,
   },
   pillsRow: {
     flexDirection: 'row',
@@ -219,5 +321,89 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: Colors.gold,
     marginTop: 2,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sortPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.line,
+  },
+  sortPillActive: {
+    borderColor: 'rgba(255,215,0,0.4)',
+    backgroundColor: 'rgba(255,215,0,0.08)',
+  },
+  sortPillText: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: Colors.text2,
+  },
+  sortPillTextActive: {
+    color: Colors.gold,
+  },
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  sheet: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 12,
+    paddingHorizontal: Spacing.lg,
+  },
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.line,
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  sheetTitle: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    letterSpacing: 1.6,
+    textTransform: 'uppercase',
+    color: Colors.text3,
+    marginBottom: 12,
+  },
+  sheetOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.line,
+  },
+  sheetOptionActive: {
+    borderBottomColor: 'rgba(255,215,0,0.15)',
+  },
+  sheetOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  sheetOptionText: {
+    fontFamily: FontFamily.body,
+    fontSize: 14,
+    color: Colors.text2,
+  },
+  sheetOptionTextActive: {
+    color: Colors.gold,
+    fontFamily: FontFamily.bodySemi,
+  },
+  loadingMore: {
+    marginTop: 24,
   },
 });
