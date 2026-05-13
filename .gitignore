@@ -33,14 +33,16 @@ yarn-error.*
 # local env files
 .env
 
+# VS Code
+.vscode/
+.msp.json
+
 # typescript
 *.tsbuildinfo
 
 app-example
 
-.vscode
-.mcp.json
-
 # generated native folders
 /ios
 /android
+
