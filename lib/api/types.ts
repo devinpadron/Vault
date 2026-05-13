@@ -1,4 +1,4 @@
-import { CardType } from '@/types';
+import { CardType, Card as AppCard } from '@/types';
 
 // Raw shapes returned by the TCGDex REST API
 export interface CardBrief {
@@ -147,3 +147,74 @@ export const RARITY_VARIANTS: Record<string, string> = {
   'Uncommon':                  '—',
   'Common':                    '—',
 };
+
+export const HIGH_VALUE_RARITIES = [
+  'Special Illustration Rare',
+  'Hyper Rare',
+  'Illustration Rare',
+  'Ultra Rare',
+  'Double Rare',
+] as const;
+
+export const FEATURED_RARITIES = [
+  'Special illustration rare',
+  'Hyper rare',
+  'Illustration rare',
+] as const;
+
+// Row shape returned by the pokemon_cards Supabase table
+export interface SupabaseCard {
+  id: string;
+  name: string;
+  image_url: string | null;
+  artist: string | null;
+  set_name: string;
+  set_series: string | null;
+  release_date: string | null;
+  card_number: string;
+  rarity: string | null;
+  variant: string | null;
+  hp: number | null;
+  types: string[] | null;
+  description: string | null;
+  variant_first_edition: boolean;
+  variant_holo: boolean;
+  variant_normal: boolean;
+  variant_reverse: boolean;
+  variant_wpromo: boolean;
+}
+
+export function mapRow(row: SupabaseCard, index = 0): AppCard {
+  const primaryType = row.types?.[0];
+  const appType = TCGDEX_TYPE_MAP[primaryType ?? ''] ?? 'dark';
+  const rarity = row.rarity ?? 'Common';
+  const foil = FOIL_RARITIES.has(rarity);
+  const pricing = RARITY_VALUES[rarity] ?? { value: 8, change: 0 };
+  const mult = 0.85 + (index % 9) * 0.04;
+  return {
+    id:          row.id,
+    name:        row.name,
+    variant:     row.variant ?? RARITY_VARIANTS[rarity] ?? '—',
+    set:         row.set_name.toUpperCase(),
+    no:          row.card_number,
+    release:     row.release_date ?? '—',
+    rarity,
+    value:       Math.round(pricing.value * mult * 100) / 100,
+    change:      pricing.change,
+    foil,
+    art:         TYPE_ART[appType],
+    creature:    TYPE_CREATURES[appType] ?? '○',
+    types:       [appType],
+    artist:      row.artist ?? 'Unknown',
+    imageUrl:    row.image_url ?? undefined,
+    hp:          row.hp ?? undefined,
+    description: row.description ?? undefined,
+    variants: {
+      firstEdition: row.variant_first_edition,
+      holo:         row.variant_holo,
+      normal:       row.variant_normal,
+      reverse:      row.variant_reverse,
+      wPromo:       row.variant_wpromo,
+    },
+  };
+}

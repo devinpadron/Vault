@@ -1,147 +1,92 @@
 import { useQuery } from '@tanstack/react-query';
-import { apiFetch } from './client';
+import { supabase } from '@/lib/supabase';
 import { Card as AppCard } from '@/types';
-import {
-  CardBrief,
-  CardFull,
-  TCGDEX_TYPE_MAP,
-  TYPE_ART,
-  TYPE_CREATURES,
-  FOIL_RARITIES,
-  RARITY_VALUES,
-  RARITY_VARIANTS,
-} from './types';
+import { SupabaseCard, mapRow, HIGH_VALUE_RARITIES, FEATURED_RARITIES } from './types';
 
-// Fixed EUR→USD rate. Cardmarket prices are in EUR; all displayed values are USD.
-const EUR_TO_USD = 1.08;
+const TABLE = 'pokemon_cards';
 
-function mapCard(raw: CardFull, index = 0): AppCard {
-  const primaryType = raw.types?.[0];
-  const appType = TCGDEX_TYPE_MAP[primaryType ?? ''] ?? 'dark';
-  const art = TYPE_ART[appType];
-  const rarity = raw.rarity ?? 'Common';
-  const foil = FOIL_RARITIES.has(rarity);
-  const pricing = RARITY_VALUES[rarity] ?? { value: 8, change: 0 };
-  const mult = 0.85 + (index % 9) * 0.04;
-  const cm = raw.pricing?.cardmarket;
-  const mktValue = cm?.avg != null
-    ? Math.round(cm.avg * EUR_TO_USD * 100) / 100
-    : Math.round(pricing.value * mult * 100) / 100;
-  const mktChange = cm?.avg != null && cm?.avg30 != null
-    ? Math.round((cm.avg - cm.avg30) * EUR_TO_USD * 100) / 100
-    : pricing.change;
-  const mktAvg30 = cm?.avg30 != null
-    ? Math.round(cm.avg30 * EUR_TO_USD * 100) / 100
-    : undefined;
+const COLS = [
+  'id', 'name', 'image_url', 'artist', 'set_name', 'set_series',
+  'release_date', 'card_number', 'rarity', 'variant', 'hp', 'types',
+  'description', 'variant_first_edition', 'variant_holo', 'variant_normal',
+  'variant_reverse', 'variant_wpromo',
+].join(',');
 
-  const imageUrl = raw.image ? `${raw.image}/high.webp` : undefined;
-  const variant = raw.suffix ?? RARITY_VARIANTS[rarity] ?? '—';
-  const totalCards = raw.set?.cardCount?.official ?? raw.set?.cardCount?.total ?? 0;
-  const cardNo = totalCards > 0 ? `${raw.localId}/${totalCards}` : String(raw.localId ?? '?');
-  return {
-    id:          raw.id ?? `card-${index}`,
-    name:        raw.name ?? 'Unknown',
-    variant,
-    set:         (raw.set?.name ?? 'Unknown Set').toUpperCase(),
-    no:          cardNo,
-    release:     raw.set?.releaseDate ?? '—',
-    rarity,
-    value:       mktValue,
-    change:      mktChange,
-    avg30:       mktAvg30,
-    foil,
-    art,
-    creature:    TYPE_CREATURES[appType] ?? '○',
-    types:       [appType],
-    artist:      raw.illustrator ?? 'Unknown',
-    imageUrl,
-    hp:          raw.hp,
-    description: raw.description,
-    variants:    raw.variants
-      ? {
-          firstEdition: raw.variants.firstEdition ?? false,
-          holo:         raw.variants.holo ?? false,
-          normal:       raw.variants.normal ?? false,
-          reverse:      raw.variants.reverse ?? false,
-          wPromo:       raw.variants.wPromo ?? false,
-        }
-      : undefined,
-  };
-}
 
-async function fetchFullCards(briefs: CardBrief[]): Promise<CardFull[]> {
-  return Promise.all(briefs.map(b => apiFetch<CardFull>(`/cards/${b.id}`)));
-}
 
-// Rarities with RARITY_VALUES ≥ $1,620 — all have enough API cards to paginate.
-const HIGH_VALUE_RARITIES = [
-  'Special Illustration Rare',
-  'Hyper Rare',
-  'Illustration Rare',
-  'Ultra Rare',
-  'Double Rare',
-] as const;
 
-// Subset used for the featured card — only the top 3 tiers for visual impact.
-const FEATURED_RARITIES = [
-  'Special Illustration Rare',
-  'Hyper Rare',
-  'Illustration Rare',
-] as const;
-
-export function useCards() {
-  // Seed rotates every hour, matching staleTime, so each fresh fetch picks a new combo.
-  const seed = Math.floor(Date.now() / (1000 * 60 * 60));
-  const rarity = HIGH_VALUE_RARITIES[seed % HIGH_VALUE_RARITIES.length];
-  const page   = String((Math.floor(seed / HIGH_VALUE_RARITIES.length) % 3) + 1);
-  const order  = seed % 2 === 0 ? 'ASC' : 'DESC';
-
-  return useQuery<AppCard[]>({
-    queryKey: ['cards', rarity, page, order],
+export function useFeaturedCard() {
+  return useQuery<AppCard | null>({
+    queryKey: ['featured-card'],
     queryFn: async () => {
-      const briefs = await apiFetch<CardBrief[]>('/cards', {
-        'rarity':                  rarity,
-        'sort:field':              'localId',
-        'sort:order':              order,
-        'pagination:page':         page,
-        'pagination:itemsPerPage': '12',
-      });
-      const full = await fetchFullCards(briefs);
-      return full.map((c, i) => mapCard(c, i));
+      const { data, error } = await supabase
+        .from(TABLE)
+        .select(COLS)
+        .in('rarity', FEATURED_RARITIES)
+        .not('image_url', 'is', null)
+        .limit(100);
+
+      if (error) throw new Error(error.message);
+      if (!data || data.length === 0) return null;
+
+      const pick = Math.floor(Math.random() * data.length);
+      return mapRow(data[pick] as unknown as SupabaseCard, pick);
     },
-    staleTime: 1000 * 60 * 60,
+    staleTime: 1000 * 60 * 10,
   });
 }
 
-export function useFeaturedCard() {
-  // Seed rotates every 6 hours, matching staleTime, offset by +3 so it never
-  // picks the same rarity slot as useCards in the same hour.
-  const seed   = Math.floor(Date.now() / (1000 * 60 * 60 * 6)) + 3;
-  const rarity = FEATURED_RARITIES[seed % FEATURED_RARITIES.length];
-  const page   = String((seed % 4) + 1);
-  const order  = seed % 2 === 0 ? 'DESC' : 'ASC';
-
+export function useCard(id: string) {
   return useQuery<AppCard | null>({
-    queryKey: ['featured-card', rarity, page],
+    queryKey: ['card', id],
     queryFn: async () => {
-      const briefs = await apiFetch<CardBrief[]>('/cards', {
-        'rarity':                  rarity,
-        'sort:field':              'localId',
-        'sort:order':              order,
-        'pagination:page':         page,
-        'pagination:itemsPerPage': '10',
-      });
-      if (!briefs.length) return null;
-      const pick = briefs[seed % briefs.length];
-      const full = await apiFetch<CardFull>(`/cards/${pick.id}`);
-      return mapCard(full, seed % 12);
+      const { data, error } = await supabase
+        .from(TABLE)
+        .select(COLS)
+        .eq('id', id)
+        .maybeSingle();
+
+      if (error) throw new Error(error.message);
+      if (!data) return null;
+      return mapRow(data as unknown as SupabaseCard);
     },
-    staleTime: 1000 * 60 * 60 * 6,
+    staleTime: 1000 * 60 * 60,
+    enabled: !!id,
+  });
+}
+
+const FILTER_COLUMN: Record<string, string> = {
+  'Name':     'name',
+  'Pokémon':  'name',
+  'Set/Pack': 'set_name',
+  'Artist':   'artist',
+  'Rarity':   'rarity',
+};
+
+export function useSearchCards(query: string, filter = 'Name') {
+  const col = FILTER_COLUMN[filter] ?? 'name';
+
+  return useQuery<AppCard[]>({
+    queryKey: ['search', query, filter],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from(TABLE)
+        .select(COLS)
+        .ilike(col, `%${query}%`)
+        .not('image_url', 'is', null)
+        .order('rarity', { ascending: false })
+        .limit(24);
+
+      if (error) throw new Error(error.message);
+      return (data as unknown as SupabaseCard[]).map(mapRow);
+    },
+    enabled: query.trim().length >= 2,
+    staleTime: 1000 * 60 * 10,
   });
 }
 
 function genPriceHistory(baseValue: number, range: string, seed: number): number[] {
-  const counts: Record<string, number> = { '1W': 8, '1M': 30, '6M': 26, '1Y': 52, 'ALL': 60 };
+  const counts:  Record<string, number> = { '1W': 8, '1M': 30, '6M': 26, '1Y': 52, 'ALL': 60 };
   const spreads: Record<string, number> = { '1W': 0.06, '1M': 0.15, '6M': 0.30, '1Y': 0.50, 'ALL': 0.70 };
   const n = counts[range] ?? 30;
   const spread = spreads[range] ?? 0.15;
@@ -166,17 +111,5 @@ export function useCardPriceHistory(id: string, range: string, baseValue = 1000)
     },
     staleTime: Infinity,
     enabled: !!id,
-  });
-}
-
-export function useCard(id: string) {
-  return useQuery<AppCard | null>({
-    queryKey: ['card', id],
-    queryFn: async () => {
-      const raw = await apiFetch<CardFull>(`/cards/${id}`);
-      return mapCard(raw);
-    },
-    staleTime: 1000 * 60 * 60,
-    enabled:   !!id,
   });
 }

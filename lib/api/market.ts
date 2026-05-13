@@ -1,8 +1,16 @@
 import { useQuery } from '@tanstack/react-query';
-import { apiFetch } from './client';
-import { CardBrief, CardFull, TCGDEX_TYPE_MAP, TYPE_ART, TYPE_CREATURES, FOIL_RARITIES, RARITY_VALUES, RARITY_VARIANTS } from './types';
-import { MOCK_DATA } from '@/data/mock';
+import { supabase } from '@/lib/supabase';
+import { SupabaseCard, mapRow } from './types';
 import { Listing, Card as AppCard } from '@/types';
+
+const TABLE = 'pokemon_cards';
+
+const COLS = [
+  'id', 'name', 'image_url', 'artist', 'set_name', 'set_series',
+  'release_date', 'card_number', 'rarity', 'variant', 'hp', 'types',
+  'description', 'variant_first_edition', 'variant_holo', 'variant_normal',
+  'variant_reverse', 'variant_wpromo',
+].join(',');
 
 const SORT_FNS: Record<string, (a: Listing, b: Listing) => number> = {
   'Trending':     (a, b) => b.price - a.price,
@@ -12,61 +20,61 @@ const SORT_FNS: Record<string, (a: Listing, b: Listing) => number> = {
     (b.condition.startsWith('PSA') ? 1 : 0) - (a.condition.startsWith('PSA') ? 1 : 0),
 };
 
+const SELLERS    = ['goldspring', 'cardvault', 'tideline', 'primepack', 'holostash', 'sparkbox', 'volkovshop', 'tracerPCG', 'aetherdrop', 'gemcase'];
+const CONDITIONS = ['NM', 'NM', 'LP', 'PSA 9', 'EX', 'NM', 'LP', 'NM', 'EX', 'PSA 9'];
+const SCORES     = [4.97, 4.99, 4.92, 4.85, 4.99, 4.94, 4.88, 4.99, 4.91, 4.96];
+const LISTED     = ['2h', '15m', '4h', '1d', '8h', '3h', '2d', '45m', '6h', '1d'];
+
+function cardToListing(card: AppCard, index: number): Listing {
+  const i = index % 10;
+  return {
+    id:           `listing-${card.id}`,
+    card,
+    price:        Math.round(card.value * (0.88 + (index % 5) * 0.07)),
+    condition:    CONDITIONS[i],
+    seller:       SELLERS[i],
+    seller_score: SCORES[i],
+    listed:       LISTED[i],
+  };
+}
+
 export function useListings(sort: string) {
   return useQuery<Listing[]>({
     queryKey: ['listings', sort],
-    queryFn: () => {
-      const fn = SORT_FNS[sort] ?? SORT_FNS['Trending'];
-      return Promise.resolve([...MOCK_DATA.listings].sort(fn));
-    },
-    staleTime: Infinity,
-  });
-}
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from(TABLE)
+        .select(COLS)
+        .eq('rarity', 'Special Illustration Rare')
+        .not('image_url', 'is', null)
+        .order('id', { ascending: true })
+        .limit(10);
 
-function mapLotCard(raw: CardFull): AppCard {
-  const primaryType = raw.types?.[0];
-  const appType = TCGDEX_TYPE_MAP[primaryType ?? ''] ?? 'dark';
-  const rarity = raw.rarity ?? 'Common';
-  const foil = FOIL_RARITIES.has(rarity);
-  const pricing = RARITY_VALUES[rarity] ?? { value: 8, change: 0 };
-  const imageUrl = raw.image ? `${raw.image}/high.webp` : undefined;
-  const variant = raw.suffix ?? RARITY_VARIANTS[rarity] ?? '—';
-  const totalCards = raw.set?.cardCount?.official ?? raw.set?.cardCount?.total ?? 0;
-  const cardNo = totalCards > 0 ? `${raw.localId}/${totalCards}` : String(raw.localId ?? '?');
-  return {
-    id:       raw.id ?? 'lot',
-    name:     raw.name ?? 'Unknown',
-    variant,
-    set:      (raw.set?.name ?? 'Unknown Set').toUpperCase(),
-    no:       cardNo,
-    release:  raw.set?.releaseDate ?? '—',
-    rarity,
-    value:    pricing.value,
-    change:   pricing.change,
-    foil,
-    art:      TYPE_ART[appType],
-    creature: TYPE_CREATURES[appType] ?? '○',
-    types:    [appType],
-    artist:   raw.illustrator ?? 'Unknown',
-    imageUrl,
-    hp:       raw.hp,
-  };
+      if (error) throw new Error(error.message);
+      const cards = (data as unknown as SupabaseCard[]).map(mapRow);
+      const listings = cards.map(cardToListing);
+      const fn = SORT_FNS[sort] ?? SORT_FNS['Trending'];
+      return [...listings].sort(fn);
+    },
+    staleTime: 1000 * 60 * 30,
+  });
 }
 
 export function useLiveLot() {
   return useQuery<AppCard | null>({
     queryKey: ['live-lot'],
     queryFn: async () => {
-      const briefs = await apiFetch<CardBrief[]>('/cards', {
-        'rarity':                  'Special Illustration Rare',
-        'sort:field':              'localId',
-        'sort:order':              'ASC',
-        'pagination:page':         '2',
-        'pagination:itemsPerPage': '1',
-      });
-      if (!briefs.length) return null;
-      const full = await apiFetch<CardFull>(`/cards/${briefs[0].id}`);
-      return mapLotCard(full);
+      const { data, error } = await supabase
+        .from(TABLE)
+        .select(COLS)
+        .eq('rarity', 'Special Illustration Rare')
+        .not('image_url', 'is', null)
+        .order('id', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error) throw new Error(error.message);
+      return mapRow(data as unknown as SupabaseCard);
     },
     staleTime: 1000 * 60 * 60,
   });

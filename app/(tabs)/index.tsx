@@ -23,6 +23,7 @@ function fmt(n: number) {
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { data: featured, isLoading: featuredLoading } = useFeaturedCard();
+  console.log('Featured card:', featured);
   const { data: news = [] } = useNews();
   const { user } = useAuth();
   const { data: collectionCards = [] } = useCollectionCards();

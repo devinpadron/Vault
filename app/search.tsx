@@ -3,8 +3,10 @@ import { StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView } from 
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CardThumb } from '@/components/cards/CardThumb';
+import { SkeletonCard } from '@/components/ui/SkeletonCard';
+import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { Icon } from '@/components/ui/Icon';
-import { MOCK_DATA } from '@/data/mock';
+import { useSearchCards } from '@/lib/api/cards';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 
 const FILTERS = ['Name', 'Set/Pack', 'Pokémon', 'Artist', 'Release', 'Rarity'];
@@ -16,17 +18,10 @@ function fmt(n: number) {
 
 export default function SearchScreen() {
   const [query, setQuery] = useState('');
-  const [activeFilters, setActiveFilters] = useState<string[]>(['Pokémon']);
+  const [activeFilter, setActiveFilter] = useState('Name');
   const insets = useSafeAreaInsets();
 
-  const results = MOCK_DATA.cards.filter(c =>
-    !query ||
-    c.name.toLowerCase().includes(query.toLowerCase()) ||
-    c.set.toLowerCase().includes(query.toLowerCase())
-  );
-
-  const toggleFilter = (f: string) =>
-    setActiveFilters(prev => prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f]);
+  const { data: results = [], isFetching, isError, refetch } = useSearchCards(query, activeFilter);
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top + 16 }]}>
@@ -60,11 +55,11 @@ export default function SearchScreen() {
         contentContainerStyle={styles.pillsRow}
       >
         {FILTERS.map(f => {
-          const active = activeFilters.includes(f);
+          const active = activeFilter === f;
           return (
             <TouchableOpacity
               key={f}
-              onPress={() => toggleFilter(f)}
+              onPress={() => setActiveFilter(f)}
               style={[styles.pill, active && styles.pillActive]}
             >
               {active && <Icon name="check" size={10} color={Colors.gold} />}
@@ -78,40 +73,41 @@ export default function SearchScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
       >
-        {/* Recent searches */}
-        {!query && (
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Recent</Text>
-            <View style={styles.recentList}>
-              {['Aether Prime', 'Drakorvex Rainbow', 'M. Volkov · Artist', 'PSA 10'].map((r, i) => (
-                <TouchableOpacity key={i} style={styles.recentRow} onPress={() => setQuery(r)}>
-                  <Icon name="search" size={12} color={Colors.text3} />
-                  <Text style={styles.recentText}>{r}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+        {isError && <ErrorPanel onRetry={refetch} />}
+
+        {/* Results header */}
+        <View style={styles.resultsHeader}>
+          <Text style={styles.sectionLabel}>
+            {query.trim().length >= 2 ? `${results.length} results` : 'Start typing to search'}
+          </Text>
+          {isFetching && query.trim().length >= 2 && (
+            <Text style={styles.live}>● LIVE</Text>
+          )}
+        </View>
+
+        {/* Skeleton while loading */}
+        {isFetching && query.trim().length >= 2 && results.length === 0 && (
+          <View style={styles.grid}>
+            {[0, 1, 2].map(i => <SkeletonCard key={i} width={104} />)}
           </View>
         )}
 
-        {/* Results */}
-        <View style={styles.resultsHeader}>
-          <Text style={styles.sectionLabel}>{results.length} results</Text>
-          {query && <Text style={styles.live}>● LIVE</Text>}
-        </View>
-
-        <View style={styles.grid}>
-          {results.slice(0, 9).map((card, i) => (
-            <TouchableOpacity
-              key={card.id}
-              style={styles.gridCell}
-              onPress={() => { router.back(); router.push(`/card/${card.id}`); }}
-            >
-              <CardThumb card={card} width={104} />
-              <Text style={styles.gridName} numberOfLines={1}>{card.name}</Text>
-              <Text style={styles.gridPrice}>${fmt(card.value)}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {/* Results grid */}
+        {results.length > 0 && (
+          <View style={styles.grid}>
+            {results.map((card, i) => (
+              <TouchableOpacity
+                key={`${card.id}-${i}`}
+                style={styles.gridCell}
+                onPress={() => { router.back(); router.push(`/card/${card.id}`); }}
+              >
+                <CardThumb card={card} width={104} />
+                <Text style={styles.gridName} numberOfLines={1}>{card.name}</Text>
+                <Text style={styles.gridPrice}>${fmt(card.value)}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -185,8 +181,11 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: Spacing.lg,
   },
-  section: {
-    marginBottom: 16,
+  resultsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
   },
   sectionLabel: {
     fontFamily: FontFamily.mono,
@@ -194,34 +193,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1.6,
     textTransform: 'uppercase',
     color: Colors.text3,
-    marginBottom: 10,
-  },
-  recentList: {
-    borderRadius: Radius.md,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: Colors.line,
-  },
-  recentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    backgroundColor: Colors.bg,
-    borderTopWidth: 1,
-    borderTopColor: Colors.line,
-  },
-  recentText: {
-    fontFamily: FontFamily.body,
-    fontSize: 13,
-    color: Colors.text2,
-  },
-  resultsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 14,
   },
   live: {
     fontFamily: FontFamily.mono,

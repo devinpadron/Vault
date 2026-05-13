@@ -27,7 +27,7 @@ interface Props {
 }
 
 const SPRING = { damping: 14, stiffness: 180 } as const;
-const MAX_TILT = 14;
+const MAX_TILT = 24;
 // Extra canvas pixels on every side so the scaled/tilted card never clips.
 const OVERFLOW = 24;
 
@@ -242,7 +242,16 @@ export function Card3D({ card, width, large = false, onPress, sway = false }: Pr
               />
             </RoundedRect>
 
-            {/* Real card image — fades in once decoded from the network */}
+            {/* Specular highlight — placeholder gloss; buried under real image once loaded */}
+            <RoundedRect x={0} y={0} width={width} height={height} r={8}>
+              <LinearGradient
+                start={vec(0, 0)}
+                end={vec(width * 0.6, height * 0.6)}
+                colors={['rgba(255,255,255,0.08)', 'rgba(255,255,255,0)']}
+              />
+            </RoundedRect>
+
+            {/* Real card image — covers all placeholder layers once decoded */}
             {cardImage && (
               <Group clip={cardClip}>
                 <SkiaImage
@@ -255,46 +264,6 @@ export function Card3D({ card, width, large = false, onPress, sway = false }: Pr
                 />
               </Group>
             )}
-
-            {/* Foil shimmer — oversized rainbow gradient clipped to card bounds,
-                offset dynamically with the tilt angle */}
-            {card.foil && (
-              <Group
-                clip={cardClip}
-                opacity={shimmerOpacity}
-                transform={shimmerTransform}
-              >
-                <RoundedRect
-                  x={-(width * 0.3)}
-                  y={-(height * 0.3)}
-                  width={width * 1.6}
-                  height={height * 1.6}
-                  r={0}
-                >
-                  <LinearGradient
-                    start={vec(0, 0)}
-                    end={vec(width * 1.6, height * 1.6)}
-                    colors={[
-                      'rgba(255,215,0,0.22)',
-                      'rgba(122,107,255,0.26)',
-                      'rgba(95,210,255,0.2)',
-                      'rgba(255,91,182,0.18)',
-                      'rgba(255,215,0,0.12)',
-                    ]}
-                    positions={[0, 0.25, 0.5, 0.75, 1]}
-                  />
-                </RoundedRect>
-              </Group>
-            )}
-
-            {/* Specular highlight — simulates physical card gloss at top-left */}
-            <RoundedRect x={0} y={0} width={width} height={height} r={8}>
-              <LinearGradient
-                start={vec(0, 0)}
-                end={vec(width * 0.6, height * 0.6)}
-                colors={['rgba(255,255,255,0.08)', 'rgba(255,255,255,0)']}
-              />
-            </RoundedRect>
 
             {/* Card border */}
             <RoundedRect
