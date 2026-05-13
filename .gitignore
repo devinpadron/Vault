@@ -38,6 +38,9 @@ yarn-error.*
 
 app-example
 
+.vscode
+.mcp.json
+
 # generated native folders
 /ios
 /android
