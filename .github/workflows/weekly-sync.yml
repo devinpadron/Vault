@@ -1,0 +1,35 @@
+name: Weekly Card Sync
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'   # Every Monday at 4 AM UTC
+  workflow_dispatch:        # Manual trigger from GitHub Actions UI
+
+jobs:
+  sync:
+    name: Sync Pokémon card data
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: scripts/package-lock.json
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: scripts
+
+      - name: Run sync
+        run: node sync.mjs
+        working-directory: scripts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PTCGIO_KEY: ${{ secrets.PTCGIO_KEY }}
