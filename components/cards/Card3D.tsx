@@ -164,7 +164,6 @@ export function Card3D({ card, width, large = false, onPress, sway = false }: Pr
       swaySnapshotRY.current = rotateY.value;
       swayOn.value = 0;
       swayT0.value = -1;
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       scale.value = withSpring(1.03, SPRING);
     })
     .onUpdate((e) => {
@@ -188,7 +187,7 @@ export function Card3D({ card, width, large = false, onPress, sway = false }: Pr
       if (sway) swayTimer.current = setTimeout(enableSway, 500);
     });
 
-  // .runOnJS(true) makes onEnd run on the JS thread so router.push works directly
+  // .runOnJS(true) // makes onEnd run on the JS thread so router.push works directly
   const tap = Gesture.Tap()
     .maxDuration(250)
     .runOnJS(true)
