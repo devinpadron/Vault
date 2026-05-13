@@ -40,11 +40,11 @@ function loadDotenv(path) {
 loadDotenv(join(__dirname, '.env'));
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY ?? '';
+const SUPABASE_KEY = process.env.SUPABASE_SECRET_KEY ?? '';
 const PTCGIO_KEY   = process.env.PTCGIO_KEY ?? '';
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error('ERROR: SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in scripts/.env');
+  console.error('ERROR: SUPABASE_URL and SUPABASE_SECRET_KEY must be set in scripts/.env');
   process.exit(1);
 }
 
