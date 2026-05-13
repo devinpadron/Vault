@@ -2,16 +2,15 @@
 /**
  * PokeVault Weekly Sync
  *
- * Phase 1 — Remove TCG Pocket cards (digital-only)
- * Phase 2 — Sync all TCGDex physical sets into Supabase
- * Phase 3 — Fill missing images via pokemontcg.io
+ * Phase 1 — Sync all TCGDex physical sets into Supabase
+ * Phase 2 — Fill missing images via pokemontcg.io
  *
  * Usage:
  *   node sync.mjs                  # full sync
  *   node sync.mjs --dry-run        # preview, no DB writes
  *   node sync.mjs --verbose        # per-card detail
- *   node sync.mjs --phase 3        # run one phase only (1, 2, or 3)
- *   node sync.mjs --set swsh1      # Phase 2 for one set (debug)
+ *   node sync.mjs --phase 2        # run one phase only (1 or 2)
+ *   node sync.mjs --set swsh1      # Phase 1 for one set (debug)
  */
 
 import { createClient } from '@supabase/supabase-js';
@@ -154,34 +153,7 @@ function chunks(arr, size) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Phase 1 — Remove TCG Pocket cards
-// ─────────────────────────────────────────────────────────────
-
-async function phase1() {
-  console.log('\n── Phase 1: Remove TCG Pocket cards ─────────────────────');
-
-  const { count } = await db
-    .from(TABLE)
-    .select('id', { count: 'exact', head: true })
-    .eq('set_series', 'Pokémon TCG Pocket');
-
-  if (!count) {
-    console.log('  No Pocket cards in DB.');
-    return;
-  }
-
-  if (DRY_RUN) {
-    console.log(`  [dry-run] Would delete ${count} Pocket cards.`);
-    return;
-  }
-
-  const { error } = await db.from(TABLE).delete().eq('set_series', 'Pokémon TCG Pocket');
-  if (error) throw new Error(`Phase 1 delete failed: ${error.message}`);
-  console.log(`  Deleted ${count} Pocket cards.`);
-}
-
-// ─────────────────────────────────────────────────────────────
-// Phase 2 — Sync TCGDex sets
+// Phase 1 — Sync TCGDex sets
 // ─────────────────────────────────────────────────────────────
 
 function buildRow(card, set, imageUrl, imageSource) {
@@ -254,8 +226,8 @@ async function syncSet(setData, ptcgHeaders) {
   return { rows: rows.filter(Boolean), errors };
 }
 
-async function phase2() {
-  console.log('\n── Phase 2: Sync TCGDex sets ─────────────────────────────');
+async function phase1() {
+  console.log('\n── Phase 1: Sync TCGDex sets ─────────────────────────────');
 
   const ptcgHeaders = PTCGIO_KEY ? { 'X-Api-Key': PTCGIO_KEY } : {};
 
@@ -317,7 +289,7 @@ async function phase2() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Phase 3 — Fix missing images
+// Phase 2 — Fix missing images
 // ─────────────────────────────────────────────────────────────
 
 // Cache: tcgdex_set_id → { serieId, ptcgSetId }
@@ -384,8 +356,8 @@ async function lookupImage(card) {
 
 const STRAT = { 1: 'tcgdex-cdn', 2: 'ptcgio-direct', 3: 'ptcgio-search' };
 
-async function phase3() {
-  console.log('\n── Phase 3: Fix missing images ───────────────────────────');
+async function phase2() {
+  console.log('\n── Phase 2: Fix missing images ───────────────────────────');
 
   const { count } = await db
     .from(TABLE)
@@ -467,13 +439,12 @@ async function main() {
   console.log('║   PokeVault Weekly Sync                  ║');
   console.log('╚══════════════════════════════════════════╝');
   console.log(`  Date    : ${new Date().toISOString().slice(0, 10)}`);
-  console.log(`  Phases  : ${[...RUN_PHASES].join(', ')}`);
+  console.log(`  Phases  : ${[...RUN_PHASES].map(p => p === 1 ? '1 (sync sets)' : '2 (fix images)').join(', ')}`);
   console.log(`  Dry run : ${DRY_RUN ? 'yes' : 'no'}`);
   console.log(`  ptcgio  : ${PTCGIO_KEY ? 'key set' : 'no key (free tier)'}`);
 
   if (RUN_PHASES.has(1)) await phase1();
   if (RUN_PHASES.has(2)) await phase2();
-  if (RUN_PHASES.has(3)) await phase3();
 
   const secs = Math.round((Date.now() - start) / 1000);
   console.log(`\n  Done in ${Math.floor(secs / 60)}m ${secs % 60}s.`);
