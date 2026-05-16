@@ -1,57 +1,5 @@
 import { CardType, Card as AppCard } from '@/types';
 
-// Raw shapes returned by the TCGDex REST API
-export interface CardBrief {
-  id: string;
-  localId: string;
-  name: string;
-  image?: string;
-}
-
-export interface CardmarketPrices {
-  updated?: string;
-  unit?: string;
-  avg?: number;
-  low?: number;
-  trend?: number;
-  avg1?: number;
-  avg7?: number;
-  avg30?: number;
-  'avg-holo'?: number;
-  'low-holo'?: number;
-  'trend-holo'?: number;
-  'avg1-holo'?: number;
-  'avg7-holo'?: number;
-  'avg30-holo'?: number;
-}
-
-export interface CardFull extends CardBrief {
-  rarity: string;
-  category: string;
-  illustrator?: string;
-  hp?: number;
-  types?: string[];
-  suffix?: string;
-  description?: string;
-  variants?: {
-    firstEdition?: boolean;
-    holo?: boolean;
-    normal?: boolean;
-    reverse?: boolean;
-    wPromo?: boolean;
-  };
-  pricing?: {
-    cardmarket?: CardmarketPrices;
-    tcgplayer?: unknown;
-  };
-  set: {
-    id: string;
-    name: string;
-    cardCount: { total: number; official: number };
-    releaseDate?: string;
-  };
-}
-
 export const TCGDEX_TYPE_MAP: Record<string, CardType> = {
   Fire: 'fire',
   Water: 'water',
@@ -157,64 +105,127 @@ export const HIGH_VALUE_RARITIES = [
 ] as const;
 
 export const FEATURED_RARITIES = [
-  'Special illustration rare',
-  'Hyper rare',
-  'Illustration rare',
+  'Special Illustration Rare',
+  'Hyper Rare',
+  'Illustration Rare',
 ] as const;
 
-// Row shape returned by the pokemon_cards Supabase table
-export interface SupabaseCard {
+// ---------------------------------------------------------------------------
+// Supabase row shapes (new tiered schema)
+// ---------------------------------------------------------------------------
+
+export interface SupabaseExpansion {
   id: string;
   name: string;
-  image_url: string | null;
-  artist: string | null;
-  set_name: string;
-  set_series: string | null;
+  series: string | null;
   release_date: string | null;
-  card_number: string;
-  rarity: string | null;
-  variant: string | null;
-  hp: number | null;
-  types: string[] | null;
-  description: string | null;
-  variant_first_edition: boolean;
-  variant_holo: boolean;
-  variant_normal: boolean;
-  variant_reverse: boolean;
-  variant_wpromo: boolean;
 }
 
-export function mapRow(row: SupabaseCard, index = 0): AppCard {
+export interface SupabaseCardImage {
+  url: string;
+  type: string;   // 'front' | 'back'
+  size: string;   // 'small' | 'medium' | 'large'
+}
+
+export interface SupabaseCurrentPrice {
+  market: number | null;
+  low: number | null;
+  high: number | null;
+  trend_7d_change: number | null;
+  trend_7d_pct: number | null;
+  trend_30d_change: number | null;
+  trend_30d_pct: number | null;
+  trend_90d_change: number | null;
+  trend_90d_pct: number | null;
+  type: string;           // 'raw' | 'graded'
+  condition: string | null;
+}
+
+export interface SupabaseCardVariant {
+  id: string;
+  name: string;
+  card_prices_current: SupabaseCurrentPrice[];
+}
+
+export interface SupabaseCardFull {
+  id: string;
+  name: string;
+  types: string[] | null;
+  hp: string | null;
+  rarity: string | null;
+  rarity_code: string | null;
+  artist: string | null;
+  number: string | null;
+  printed_number: string | null;
+  flavor_text: string | null;
+  subtypes: string[] | null;
+  expansions: SupabaseExpansion;
+  card_images: SupabaseCardImage[];
+  card_variants: SupabaseCardVariant[];
+}
+
+// Columns to select in every card query — nested PostgREST syntax
+export const CARD_SELECT = [
+  'id', 'name', 'types', 'hp', 'rarity', 'rarity_code',
+  'artist', 'number', 'printed_number', 'flavor_text', 'subtypes',
+  'expansions!expansion_id!inner(id, name, series, release_date)',
+  'card_images(url, type, size)',
+  'card_variants(id, name, card_prices_current(market, low, high, trend_7d_change, trend_7d_pct, trend_30d_change, trend_30d_pct, trend_90d_change, trend_90d_pct, type, condition))',
+].join(', ');
+
+export function mapRow(row: SupabaseCardFull, index = 0): AppCard {
   const primaryType = row.types?.[0];
   const appType = TCGDEX_TYPE_MAP[primaryType ?? ''] ?? 'dark';
   const rarity = row.rarity ?? 'Common';
   const foil = FOIL_RARITIES.has(rarity);
-  const pricing = RARITY_VALUES[rarity] ?? { value: 8, change: 0 };
+  const rarityPricing = RARITY_VALUES[rarity] ?? { value: 8, change: 0 };
   const mult = 0.85 + (index % 9) * 0.04;
+
+  // Prefer live NM raw price from Tier 2 cache; fall back to rarity-based estimate
+  const nmPrice = row.card_variants
+    .flatMap(v => v.card_prices_current)
+    .find(p => p.type === 'raw' && p.condition === 'NM');
+
+  const value  = nmPrice?.market  != null ? nmPrice.market         : Math.round(rarityPricing.value * mult * 100) / 100;
+  const change = nmPrice?.trend_7d_change != null ? nmPrice.trend_7d_change : rarityPricing.change;
+
+  // Pick front/large image, falling back through sizes
+  const pickImage = (imgType: string, ...sizes: string[]): string | undefined => {
+    for (const size of sizes) {
+      const img = row.card_images.find(i => i.type === imgType && i.size === size);
+      if (img) return img.url;
+    }
+    return undefined;
+  };
+
+  // Map Scrydex variant name strings → CardVariants boolean flags for UI chips
+  const variantNames = new Set(row.card_variants.map(v => v.name));
+  const variants = {
+    holo:         variantNames.has('holofoil') || variantNames.has('unlimitedHolofoil'),
+    reverse:      variantNames.has('reverseHolofoil'),
+    normal:       variantNames.has('normal'),
+    firstEdition: false,
+    wPromo:       false,
+  };
+
   return {
     id:          row.id,
     name:        row.name,
-    variant:     row.variant ?? RARITY_VARIANTS[rarity] ?? '—',
-    set:         row.set_name.toUpperCase(),
-    no:          row.card_number,
-    release:     row.release_date ?? '—',
+    variant:     row.card_variants[0]?.name ?? RARITY_VARIANTS[rarity] ?? '—',
+    set:         row.expansions.name.toUpperCase(),
+    no:          row.printed_number ?? row.number ?? '—',
+    release:     row.expansions.release_date ?? '—',
     rarity,
-    value:       Math.round(pricing.value * mult * 100) / 100,
-    change:      pricing.change,
+    value,
+    change,
     foil,
     art:         TYPE_ART[appType],
     creature:    TYPE_CREATURES[appType] ?? '○',
     types:       [appType],
     artist:      row.artist ?? 'Unknown',
-    imageUrl:    row.image_url ?? undefined,
-    hp:          row.hp ?? undefined,
-    description: row.description ?? undefined,
-    variants: {
-      firstEdition: row.variant_first_edition,
-      holo:         row.variant_holo,
-      normal:       row.variant_normal,
-      reverse:      row.variant_reverse,
-      wPromo:       row.variant_wpromo,
-    },
+    imageUrl:    pickImage('front', 'large', 'medium', 'small'),
+    hp:          row.hp ? (parseInt(row.hp, 10) || undefined) : undefined,
+    description: row.flavor_text ?? undefined,
+    variants,
   };
 }

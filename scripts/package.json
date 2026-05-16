@@ -4,10 +4,12 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "sync": "node sync.mjs",
-    "sync:dry": "node sync.mjs --dry-run",
-    "sync:images": "node sync.mjs --phase 3",
-    "sync:verbose": "node sync.mjs --verbose"
+    "seed": "node seed-catalog.mjs",
+    "seed:dry": "node seed-catalog.mjs --dry-run",
+    "seed:verbose": "node seed-catalog.mjs --verbose",
+    "seed:expansion": "node seed-catalog.mjs --expansion",
+    "seed:history": "node seed-history.mjs",
+    "seed:history:shallow": "node seed-history.mjs --days 30 --batch 20"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.47.0"

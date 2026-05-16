@@ -1,16 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { SupabaseCard, mapRow } from './types';
+import { SupabaseCardFull, CARD_SELECT, mapRow } from './types';
 import { Listing, Card as AppCard } from '@/types';
 
-const TABLE = 'pokemon_cards';
-
-const COLS = [
-  'id', 'name', 'image_url', 'artist', 'set_name', 'set_series',
-  'release_date', 'card_number', 'rarity', 'variant', 'hp', 'types',
-  'description', 'variant_first_edition', 'variant_holo', 'variant_normal',
-  'variant_reverse', 'variant_wpromo',
-].join(',');
+const TABLE = 'cards';
 
 const SORT_FNS: Record<string, (a: Listing, b: Listing) => number> = {
   'Trending':     (a, b) => b.price - a.price,
@@ -44,14 +37,13 @@ export function useListings(sort: string) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from(TABLE)
-        .select(COLS)
+        .select(CARD_SELECT)
         .eq('rarity', 'Special Illustration Rare')
-        .not('image_url', 'is', null)
         .order('id', { ascending: true })
         .limit(10);
 
       if (error) throw new Error(error.message);
-      const cards = (data as unknown as SupabaseCard[]).map(mapRow);
+      const cards = (data as unknown as SupabaseCardFull[]).map(mapRow);
       const listings = cards.map(cardToListing);
       const fn = SORT_FNS[sort] ?? SORT_FNS['Trending'];
       return [...listings].sort(fn);
@@ -66,15 +58,15 @@ export function useLiveLot() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from(TABLE)
-        .select(COLS)
+        .select(CARD_SELECT)
         .eq('rarity', 'Special Illustration Rare')
-        .not('image_url', 'is', null)
         .order('id', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (error) throw new Error(error.message);
-      return mapRow(data as unknown as SupabaseCard);
+      if (!data) return null;
+      return mapRow(data as unknown as SupabaseCardFull);
     },
     staleTime: 1000 * 60 * 60,
   });
