@@ -36,12 +36,19 @@ function CardCell({ card, index }: { card: Card; index: number }) {
             <Text style={styles.cardVariant}> {cardNameVariant(card.name)}</Text>
           )}
         </Text>
+        <Text style={styles.cardSet} numberOfLines={1}>{card.set}</Text>
         <View style={styles.priceRow}>
-          <Text style={styles.price}>${fmt(card.value)}</Text>
-          {card.change !== 0 && (
-            <Text style={[styles.change, { color: card.change > 0 ? Colors.up : Colors.down }]}>
-              {card.change > 0 ? '↑' : '↓'} {Math.abs(card.change).toFixed(0)}
-            </Text>
+          {card.value > 0 ? (
+            <>
+              <Text style={styles.price}>${fmt(card.value)}</Text>
+              {card.trend30d != null && card.trend30d !== 0 && (
+                <Text style={[styles.trend, { color: card.trend30d > 0 ? Colors.up : Colors.down }]}>
+                  {card.trend30d > 0 ? '↑' : '↓'}{Math.abs(card.trend30d).toFixed(1)}%
+                </Text>
+              )}
+            </>
+          ) : (
+            <Text style={[styles.price, { color: Colors.text3 }]}>—</Text>
           )}
         </View>
       </View>
@@ -244,6 +251,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.text3,
   },
+  cardSet: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 0.6,
+    color: Colors.text3,
+    marginTop: 2,
+    textTransform: 'uppercase',
+  },
   priceRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -258,5 +273,9 @@ const styles = StyleSheet.create({
   change: {
     fontFamily: FontFamily.mono,
     fontSize: 10,
+  },
+  trend: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
   },
 });

@@ -158,7 +158,17 @@ export default function SearchScreen() {
               >
                 <CardThumb card={card} width={104} />
                 <Text style={styles.gridName} numberOfLines={1}>{card.name}</Text>
-                <Text style={styles.gridPrice}>${fmt(card.value)}</Text>
+                <Text style={styles.gridSet} numberOfLines={1}>{card.set}</Text>
+                <View style={styles.gridPriceRow}>
+                  <Text style={[styles.gridPrice, card.value === 0 && { color: Colors.text3 }]}>
+                    {card.value > 0 ? `$${fmt(card.value)}` : '—'}
+                  </Text>
+                  {card.value > 0 && card.trend30d != null && card.trend30d !== 0 && (
+                    <Text style={[styles.gridTrend, { color: card.trend30d > 0 ? Colors.up : Colors.down }]}>
+                      {card.trend30d > 0 ? '↑' : '↓'}{Math.abs(card.trend30d).toFixed(1)}%
+                    </Text>
+                  )}
+                </View>
               </TouchableOpacity>
             ))}
           </View>
@@ -316,11 +326,28 @@ const styles = StyleSheet.create({
     marginTop: 6,
     lineHeight: 13,
   },
+  gridSet: {
+    fontFamily: FontFamily.mono,
+    fontSize: 8,
+    letterSpacing: 0.5,
+    color: Colors.text3,
+    marginTop: 2,
+    textTransform: 'uppercase',
+  },
+  gridPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+  },
   gridPrice: {
     fontFamily: FontFamily.mono,
     fontSize: 9,
     color: Colors.gold,
-    marginTop: 2,
+  },
+  gridTrend: {
+    fontFamily: FontFamily.mono,
+    fontSize: 8,
   },
   headerRight: {
     flexDirection: 'row',

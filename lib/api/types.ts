@@ -1,4 +1,4 @@
-import { CardType, Card as AppCard } from '@/types';
+import { CardType, Card as AppCard, VariantPrice } from '@/types';
 
 export const TCGDEX_TYPE_MAP: Record<string, CardType> = {
   Fire: 'fire',
@@ -178,21 +178,50 @@ export const CARD_SELECT = [
   'card_variants(id, name, card_prices_current(market, low, high, trend_7d_change, trend_7d_pct, trend_30d_change, trend_30d_pct, trend_90d_change, trend_90d_pct, type, condition))',
 ].join(', ');
 
+// Known variant overrides — covers the most common cases cleanly.
+const KNOWN_VARIANTS: Record<string, string> = {
+  normal:               'Normal',
+  holofoil:             'Holofoil',
+  unlimitedHolofoil:    'Unlimited',
+  reverseHolofoil:      'Reverse Holo',
+  firstEdition:         '1st Edition',
+  firstEditionHolofoil: '1st Edition',
+};
+
+function formatVariantName(name: string): string {
+  if (KNOWN_VARIANTS[name]) return KNOWN_VARIANTS[name];
+
+  // Convert camelCase → individual words
+  const words = name
+    .replace(/([A-Z])/g, ' $1')
+    .trim()
+    .split(/\s+/)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+
+  // Strip trailing "Holofoil" when other words are present — it's implied
+  // by the holo badge already shown on the card.
+  if (words.length > 1 && words[words.length - 1].toLowerCase() === 'holofoil') {
+    words.pop();
+  }
+
+  return words.join(' ') || name;
+}
+
 export function mapRow(row: SupabaseCardFull, index = 0): AppCard {
   const primaryType = row.types?.[0];
   const appType = TCGDEX_TYPE_MAP[primaryType ?? ''] ?? 'dark';
   const rarity = row.rarity ?? 'Common';
   const foil = FOIL_RARITIES.has(rarity);
-  const rarityPricing = RARITY_VALUES[rarity] ?? { value: 8, change: 0 };
-  const mult = 0.85 + (index % 9) * 0.04;
 
-  // Prefer live NM raw price from Tier 2 cache; fall back to rarity-based estimate
+  // Use live NM raw price. When no price data exists, value = 0 so the UI
+  // can show "—" rather than a misleading rarity-based estimate.
   const nmPrice = row.card_variants
     .flatMap(v => v.card_prices_current)
     .find(p => p.type === 'raw' && p.condition === 'NM');
 
-  const value  = nmPrice?.market  != null ? nmPrice.market         : Math.round(rarityPricing.value * mult * 100) / 100;
-  const change = nmPrice?.trend_7d_change != null ? nmPrice.trend_7d_change : rarityPricing.change;
+  const value   = nmPrice?.market         ?? 0;
+  const change  = nmPrice?.trend_7d_change ?? 0;
+  const trend30d = nmPrice?.trend_30d_pct  ?? null;
 
   // Pick front/large image, falling back through sizes
   const pickImage = (imgType: string, ...sizes: string[]): string | undefined => {
@@ -202,6 +231,20 @@ export function mapRow(row: SupabaseCardFull, index = 0): AppCard {
     }
     return undefined;
   };
+
+  // Variant price list — only variants with an NM raw price, sorted highest first.
+  const variantPrices: VariantPrice[] = row.card_variants
+    .map(v => {
+      const nm = v.card_prices_current.find(p => p.type === 'raw' && p.condition === 'NM');
+      return {
+        id:          v.id,
+        name:        v.name,
+        displayName: formatVariantName(v.name),
+        price:       nm?.market ?? null,
+      };
+    })
+    .filter(v => v.price != null)
+    .sort((a, b) => (b.price ?? 0) - (a.price ?? 0));
 
   // Map Scrydex variant name strings → CardVariants boolean flags for UI chips
   const variantNames = new Set(row.card_variants.map(v => v.name));
@@ -229,6 +272,7 @@ export function mapRow(row: SupabaseCardFull, index = 0): AppCard {
     regulation_mark:          row.regulation_mark ?? undefined,
     value,
     change,
+    trend30d,
     foil,
     art:                      TYPE_ART[appType],
     creature:                 TYPE_CREATURES[appType] ?? '○',
@@ -238,5 +282,6 @@ export function mapRow(row: SupabaseCardFull, index = 0): AppCard {
     hp:                       row.hp ? (parseInt(row.hp, 10) || undefined) : undefined,
     description:              row.flavor_text ?? undefined,
     variants,
+    variantPrices:            variantPrices.length > 0 ? variantPrices : undefined,
   };
 }

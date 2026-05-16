@@ -98,8 +98,13 @@ export default function CardDetailScreen() {
   const [newBinderTone, setNewBinderTone] = useState<[string, string]>(TONE_PAIRS[0]);
   const insets = useSafeAreaInsets();
 
+  const [selectedVariantId, setSelectedVariantId] = useState<string | undefined>(undefined);
+
   const { data: card, isLoading: cardLoading } = useCard(id ?? '');
-  const { data: pricing } = useCardPricing(card);
+
+  // Default to the first (highest-priced) variant; user selection overrides.
+  const activeVariantId = selectedVariantId ?? card?.variantPrices?.[0]?.id;
+  const { data: pricing } = useCardPricing(card, activeVariantId);
   const priceHistory = sliceHistoryForRange(pricing?.price_history ?? [], range);
   const { data: binders = [] } = useBinders();
   const addCardToBinder = useAddCardToBinder();
@@ -190,6 +195,37 @@ export default function CardDetailScreen() {
             <VariantChips variants={card.variants} />
           </View>
         </View>
+
+        {/* Variant selector — only shown when multiple priced variants exist */}
+        {(card.variantPrices?.length ?? 0) > 1 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.variantScroll}
+            style={styles.variantRow}
+          >
+            {card.variantPrices!.map(v => {
+              const isActive = (activeVariantId) === v.id;
+              return (
+                <TouchableOpacity
+                  key={v.id}
+                  style={[styles.variantPill, isActive && styles.variantPillActive]}
+                  onPress={() => setSelectedVariantId(v.id)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.variantPillName, isActive && styles.variantPillNameActive]}>
+                    {v.displayName}
+                  </Text>
+                  {v.price != null && (
+                    <Text style={[styles.variantPillPrice, isActive && styles.variantPillPriceActive]}>
+                      ${fmt(v.price)}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
 
         {/* Price module */}
         <View style={[styles.panel, { marginBottom: 16 }]}>
@@ -589,6 +625,45 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     fontSize: 13,
     color: Colors.text,
+  },
+  // Variant selector
+  variantRow: {
+    marginBottom: 14,
+  },
+  variantScroll: {
+    paddingHorizontal: Spacing.xl,
+    gap: 8,
+    flexDirection: 'row',
+  },
+  variantPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    gap: 3,
+  },
+  variantPillActive: {
+    borderColor: Colors.gold,
+    backgroundColor: 'rgba(255,215,0,0.08)',
+  },
+  variantPillName: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 12,
+    color: Colors.text2,
+  },
+  variantPillNameActive: {
+    color: Colors.gold,
+  },
+  variantPillPrice: {
+    fontFamily: FontFamily.mono,
+    fontSize: 11,
+    color: Colors.text3,
+  },
+  variantPillPriceActive: {
+    color: Colors.gold,
   },
   // Metadata panel
   metaPanel: {

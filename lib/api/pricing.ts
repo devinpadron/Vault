@@ -32,32 +32,47 @@ const NULL_PRICING: CardPricing = {
   not_found: false,
 };
 
-export async function getCardPricing(cardId: string): Promise<CardPricing> {
-  // Resolve variant IDs for this card
-  const { data: variants, error: variantErr } = await supabase
-    .from('card_variants')
-    .select('id')
-    .eq('card_id', cardId);
+export async function getCardPricing(cardId: string, variantId?: string): Promise<CardPricing> {
+  let resolvedVariantId: string;
 
-  if (variantErr || !variants || variants.length === 0) return NULL_PRICING;
+  if (variantId) {
+    // Specific variant requested by the UI selector — use it directly.
+    resolvedVariantId = variantId;
+  } else {
+    // No variant specified: find the first variant of this card with an NM raw price.
+    const { data: variants, error: variantErr } = await supabase
+      .from('card_variants')
+      .select('id')
+      .eq('card_id', cardId);
 
-  const variantIds = (variants as { id: string }[]).map(v => v.id);
+    if (variantErr || !variants || variants.length === 0) return NULL_PRICING;
 
-  // Current prices — prefer NM raw. Select variant_id so the history query
-  // uses the exact same variant, giving one row per day instead of N rows.
+    const variantIds = (variants as { id: string }[]).map(v => v.id);
+    const { data: firstPrice } = await supabase
+      .from('card_prices_current')
+      .select('variant_id')
+      .in('variant_id', variantIds)
+      .eq('type', 'raw')
+      .eq('condition', 'NM')
+      .limit(1)
+      .maybeSingle();
+
+    if (!firstPrice) return NULL_PRICING;
+    resolvedVariantId = (firstPrice as { variant_id: string }).variant_id;
+  }
+
+  // Current price for the resolved variant
   const { data: prices } = await supabase
     .from('card_prices_current')
-    .select('variant_id, market, low, high, trend_7d_change, trend_30d_change, trend_90d_change, trend_7d_pct, trend_30d_pct, trend_90d_pct')
-    .in('variant_id', variantIds)
+    .select('market, low, high, trend_7d_change, trend_30d_change, trend_90d_change, trend_7d_pct, trend_30d_pct, trend_90d_pct')
+    .eq('variant_id', resolvedVariantId)
     .eq('type', 'raw')
     .eq('condition', 'NM')
-    .limit(1)
     .maybeSingle();
 
   if (!prices) return NULL_PRICING;
 
   const p = prices as {
-    variant_id: string;
     market: number | null;
     low: number | null;
     high: number | null;
@@ -69,13 +84,11 @@ export async function getCardPricing(cardId: string): Promise<CardPricing> {
     trend_90d_pct: number | null;
   };
 
-  // Price history — scoped to the single variant that has the current price.
-  // Using .eq('variant_id', p.variant_id) gives exactly 1 row per day,
-  // so 30D = last 30 entries and 90D = last 90 entries are always distinct.
+  // Price history — 1 row per day for this specific variant
   const { data: history } = await supabase
     .from('card_price_history')
     .select('market')
-    .eq('variant_id', p.variant_id)
+    .eq('variant_id', resolvedVariantId)
     .eq('type', 'raw')
     .eq('condition', 'NM')
     .order('snapshot_date', { ascending: true })

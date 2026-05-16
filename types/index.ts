@@ -32,6 +32,13 @@ export interface CardVariants {
   firstEdition: boolean; // firstEdition (vintage sets)
 }
 
+export interface VariantPrice {
+  id: string;          // card_variants UUID
+  name: string;        // Scrydex variant name
+  displayName: string; // human-readable label
+  price: number | null;
+}
+
 export interface Card {
   // Identity
   id: string;
@@ -52,8 +59,9 @@ export interface Card {
   regulation_mark?: string;
 
   // Market
-  value: number; // current NM raw market price (USD)
-  change: number; // 7-day price change
+  value: number;           // current NM raw market price (USD)
+  change: number;          // 7-day price change
+  trend30d: number | null; // 30-day percent change (null = no data)
 
   // Visuals
   art: [string, string, string];
@@ -66,6 +74,7 @@ export interface Card {
   hp?: number;
   description?: string; // flavor text
   variants?: CardVariants;
+  variantPrices?: VariantPrice[];
 }
 
 export interface Binder {

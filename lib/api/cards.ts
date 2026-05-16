@@ -115,12 +115,12 @@ export function useCardPriceHistory(_id: string, _range: string, _baseValue = 10
   });
 }
 
-export function useCardPricing(card: AppCard | null | undefined) {
+export function useCardPricing(card: AppCard | null | undefined, variantId?: string) {
   return useQuery<CardPricing | null>({
-    queryKey: ['card-pricing', card?.id],
+    queryKey: ['card-pricing', card?.id, variantId ?? null],
     queryFn: () => {
       if (!card) return Promise.resolve(null);
-      return getCardPricing(card.id);
+      return getCardPricing(card.id, variantId);
     },
     staleTime: 1000 * 60 * 60 * 24,
     enabled: !!card?.id,
