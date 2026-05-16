@@ -43,10 +43,11 @@ export async function getCardPricing(cardId: string): Promise<CardPricing> {
 
   const variantIds = (variants as { id: string }[]).map(v => v.id);
 
-  // Current prices — prefer NM raw
+  // Current prices — prefer NM raw. Select variant_id so the history query
+  // uses the exact same variant, giving one row per day instead of N rows.
   const { data: prices } = await supabase
     .from('card_prices_current')
-    .select('market, low, high, trend_7d_change, trend_30d_change, trend_90d_change, trend_7d_pct, trend_30d_pct, trend_90d_pct')
+    .select('variant_id, market, low, high, trend_7d_change, trend_30d_change, trend_90d_change, trend_7d_pct, trend_30d_pct, trend_90d_pct')
     .in('variant_id', variantIds)
     .eq('type', 'raw')
     .eq('condition', 'NM')
@@ -56,6 +57,7 @@ export async function getCardPricing(cardId: string): Promise<CardPricing> {
   if (!prices) return NULL_PRICING;
 
   const p = prices as {
+    variant_id: string;
     market: number | null;
     low: number | null;
     high: number | null;
@@ -67,11 +69,13 @@ export async function getCardPricing(cardId: string): Promise<CardPricing> {
     trend_90d_pct: number | null;
   };
 
-  // Price history — last 90 daily NM raw snapshots
+  // Price history — scoped to the single variant that has the current price.
+  // Using .eq('variant_id', p.variant_id) gives exactly 1 row per day,
+  // so 30D = last 30 entries and 90D = last 90 entries are always distinct.
   const { data: history } = await supabase
     .from('card_price_history')
     .select('market')
-    .in('variant_id', variantIds)
+    .eq('variant_id', p.variant_id)
     .eq('type', 'raw')
     .eq('condition', 'NM')
     .order('snapshot_date', { ascending: true })
@@ -81,37 +85,44 @@ export async function getCardPricing(cardId: string): Promise<CardPricing> {
     .map((h: { market: number | null }) => h.market)
     .filter((m): m is number => m != null);
 
-  // Derive min/max from the history window
-  const min_1y    = priceHistory.length > 0 ? Math.min(...priceHistory) : null;
-  const max_1y    = priceHistory.length > 0 ? Math.max(...priceHistory) : null;
+  // Derive min/max and rolling averages from available history.
+  // min/max_1y covers all stored history (up to 90 days).
+  // min/max_all_time mirrors that until we accumulate more than a year.
+  const minVal = priceHistory.length > 0 ? Math.min(...priceHistory) : null;
+  const maxVal = priceHistory.length > 0 ? Math.max(...priceHistory) : null;
 
   return {
-    price_usd:       p.market,
-    price_avg_7d:    null,
-    price_avg_30d:   null,
-    price_avg_90d:   null,
+    price_usd:        p.market,
+    price_avg_7d:     rollingAvg(priceHistory, 7),
+    price_avg_30d:    rollingAvg(priceHistory, 30),
+    price_avg_90d:    rollingAvg(priceHistory, 90),
     price_change_7d:  p.trend_7d_change,
     price_change_30d: p.trend_30d_change,
     price_change_90d: p.trend_90d_change,
-    min_1y,
-    max_1y,
-    min_all_time:    null,
-    max_all_time:    null,
-    price_history:   priceHistory,
-    not_found:       false,
+    min_1y:           minVal,
+    max_1y:           maxVal,
+    min_all_time:     minVal,
+    max_all_time:     maxVal,
+    price_history:    priceHistory,
+    not_found:        false,
   };
+}
+
+function rollingAvg(history: number[], days: number): number | null {
+  const slice = history.slice(-days);
+  if (slice.length === 0) return null;
+  const sum = slice.reduce((s, v) => s + v, 0);
+  return Math.round((sum / slice.length) * 100) / 100;
 }
 
 export function sliceHistoryForRange(history: number[], range: string): number[] {
   if (history.length < 2) return [];
   const sliceTo: Record<string, number> = {
-    '1W': 7,
-    '1M': 30,
-    '6M': 90,
-    '1Y': 90,
-    'ALL': history.length,
+    '7D':  7,
+    '30D': 30,
+    '90D': history.length,
   };
-  const n = Math.min(sliceTo[range] ?? 30, history.length);
+  const n = Math.min(sliceTo[range] ?? history.length, history.length);
   return history.slice(-n);
 }
 
@@ -121,11 +132,9 @@ export function changForRange(
 ): { value: number | null; label: string } {
   if (!pricing) return { value: null, label: '' };
   const map: Record<string, { value: number | null; label: string }> = {
-    '1W':  { value: pricing.price_change_7d,  label: '7D' },
-    '1M':  { value: pricing.price_change_30d, label: '30D' },
-    '6M':  { value: pricing.price_change_90d, label: '90D' },
-    '1Y':  { value: pricing.price_change_90d, label: '90D' },
-    'ALL': { value: pricing.price_change_90d, label: '90D' },
+    '7D':  { value: pricing.price_change_7d,  label: '7D' },
+    '30D': { value: pricing.price_change_30d, label: '30D' },
+    '90D': { value: pricing.price_change_90d, label: '90D' },
   };
   return map[range] ?? { value: null, label: '' };
 }
@@ -136,11 +145,9 @@ export function avgForRange(
 ): { value: number | null; label: string } {
   if (!pricing) return { value: null, label: '' };
   const map: Record<string, { value: number | null; label: string }> = {
-    '1W':  { value: pricing.price_avg_7d,  label: '7D AVG' },
-    '1M':  { value: pricing.price_avg_30d, label: '30D AVG' },
-    '6M':  { value: pricing.price_avg_90d, label: '90D AVG' },
-    '1Y':  { value: pricing.price_avg_90d, label: '90D AVG' },
-    'ALL': { value: pricing.price_avg_90d, label: '90D AVG' },
+    '7D':  { value: pricing.price_avg_7d,  label: '7D AVG' },
+    '30D': { value: pricing.price_avg_30d, label: '30D AVG' },
+    '90D': { value: pricing.price_avg_90d, label: '90D AVG' },
   };
   return map[range] ?? { value: null, label: '' };
 }

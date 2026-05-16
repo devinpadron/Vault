@@ -150,6 +150,8 @@ export interface SupabaseCardVariant {
 export interface SupabaseCardFull {
   id: string;
   name: string;
+  supertype: string | null;
+  subtypes: string[] | null;
   types: string[] | null;
   hp: string | null;
   rarity: string | null;
@@ -158,7 +160,8 @@ export interface SupabaseCardFull {
   number: string | null;
   printed_number: string | null;
   flavor_text: string | null;
-  subtypes: string[] | null;
+  national_pokedex_numbers: number[] | null;
+  regulation_mark: string | null;
   expansions: SupabaseExpansion;
   card_images: SupabaseCardImage[];
   card_variants: SupabaseCardVariant[];
@@ -166,8 +169,10 @@ export interface SupabaseCardFull {
 
 // Columns to select in every card query — nested PostgREST syntax
 export const CARD_SELECT = [
-  'id', 'name', 'types', 'hp', 'rarity', 'rarity_code',
-  'artist', 'number', 'printed_number', 'flavor_text', 'subtypes',
+  'id', 'name', 'supertype', 'subtypes', 'types', 'hp',
+  'rarity', 'rarity_code', 'artist',
+  'number', 'printed_number', 'flavor_text',
+  'national_pokedex_numbers', 'regulation_mark',
   'expansions!expansion_id!inner(id, name, series, release_date)',
   'card_images(url, type, size)',
   'card_variants(id, name, card_prices_current(market, low, high, trend_7d_change, trend_7d_pct, trend_30d_change, trend_30d_pct, trend_90d_change, trend_90d_pct, type, condition))',
@@ -200,32 +205,38 @@ export function mapRow(row: SupabaseCardFull, index = 0): AppCard {
 
   // Map Scrydex variant name strings → CardVariants boolean flags for UI chips
   const variantNames = new Set(row.card_variants.map(v => v.name));
-  const variants = {
+  const variants: import('@/types').CardVariants = {
     holo:         variantNames.has('holofoil') || variantNames.has('unlimitedHolofoil'),
     reverse:      variantNames.has('reverseHolofoil'),
-    normal:       variantNames.has('normal'),
-    firstEdition: false,
-    wPromo:       false,
+    firstEdition: variantNames.has('firstEdition'),
   };
 
   return {
-    id:          row.id,
-    name:        row.name,
-    variant:     row.card_variants[0]?.name ?? RARITY_VARIANTS[rarity] ?? '—',
-    set:         row.expansions.name.toUpperCase(),
-    no:          row.printed_number ?? row.number ?? '—',
-    release:     row.expansions.release_date ?? '—',
+    id:                       row.id,
+    name:                     row.name,
+    variant:                  row.card_variants[0]?.name ?? RARITY_VARIANTS[rarity] ?? '—',
+    set:                      row.expansions.name.toUpperCase(),
+    series:                   row.expansions.series ?? undefined,
+    no:                       row.printed_number ?? row.number ?? '—',
+    release:                  row.expansions.release_date ?? '—',
     rarity,
+    rarity_code:              row.rarity_code ?? undefined,
+    supertype:                row.supertype ?? undefined,
+    subtypes:                 row.subtypes?.length ? row.subtypes : undefined,
+    national_pokedex_numbers: row.national_pokedex_numbers?.length
+                                ? row.national_pokedex_numbers
+                                : undefined,
+    regulation_mark:          row.regulation_mark ?? undefined,
     value,
     change,
     foil,
-    art:         TYPE_ART[appType],
-    creature:    TYPE_CREATURES[appType] ?? '○',
-    types:       [appType],
-    artist:      row.artist ?? 'Unknown',
-    imageUrl:    pickImage('front', 'large', 'medium', 'small'),
-    hp:          row.hp ? (parseInt(row.hp, 10) || undefined) : undefined,
-    description: row.flavor_text ?? undefined,
+    art:                      TYPE_ART[appType],
+    creature:                 TYPE_CREATURES[appType] ?? '○',
+    types:                    [appType],
+    artist:                   row.artist ?? 'Unknown',
+    imageUrl:                 pickImage('front', 'large', 'medium', 'small'),
+    hp:                       row.hp ? (parseInt(row.hp, 10) || undefined) : undefined,
+    description:              row.flavor_text ?? undefined,
     variants,
   };
 }

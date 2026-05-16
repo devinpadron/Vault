@@ -1,11 +1,20 @@
-export type CardType = 'fire' | 'water' | 'grass' | 'bolt' | 'psy' | 'dark' | 'metal' | 'dragon' | 'fairy';
+export type CardType =
+  | "fire"
+  | "water"
+  | "grass"
+  | "bolt"
+  | "psy"
+  | "dark"
+  | "metal"
+  | "dragon"
+  | "fairy";
 
 // Matches known card suffix variants at the end of a card name (case-insensitive).
-const CARD_VARIANT_RE = /\s+(ex|gx|V|VMAX|VSTAR)$/i;
+const CARD_VARIANT_RE = /\s+(ex|gx|V|VMAX|VSTAR|V-UNION)$/i;
 
 /** Returns the base card name with any trailing variant suffix stripped. */
 export function cardBaseName(name: string): string {
-  return name.replace(CARD_VARIANT_RE, '');
+  return name.replace(CARD_VARIANT_RE, "");
 }
 
 /**
@@ -18,32 +27,44 @@ export function cardNameVariant(name: string): string | null {
 }
 
 export interface CardVariants {
-  firstEdition: boolean;
-  holo: boolean;
-  normal: boolean;
-  reverse: boolean;
-  wPromo: boolean;
+  holo: boolean; // holofoil or unlimitedHolofoil
+  reverse: boolean; // reverseHolofoil
+  firstEdition: boolean; // firstEdition (vintage sets)
 }
 
 export interface Card {
+  // Identity
   id: string;
   name: string;
-  variant: string;
-  set: string;
-  no: string;
-  release: string;
+  variant: string; // primary variant display label (e.g. 'holofoil', 'EX ★')
+  set: string; // expansion name, uppercased
+  series?: string; // expansion series (e.g. 'Scarlet & Violet')
+  no: string; // printed card number (e.g. '087/167')
+  release: string; // release date (YYYY-MM-DD)
+
+  // Classification
   rarity: string;
-  value: number;
-  change: number;
-  avg30?: number;
+  rarity_code?: string; // symbol shorthand (e.g. '★H')
+  supertype?: string; // 'Pokémon' | 'Trainer' | 'Energy'
+  subtypes?: string[]; // ['Stage 2'] | ['V', 'VMAX'] | etc.
   foil: boolean;
+  national_pokedex_numbers?: number[];
+  regulation_mark?: string;
+
+  // Market
+  value: number; // current NM raw market price (USD)
+  change: number; // 7-day price change
+
+  // Visuals
   art: [string, string, string];
-  creature: string;
+  creature: string; // type symbol glyph
   types: CardType[];
-  artist: string;
   imageUrl?: string;
+
+  // Detail
+  artist: string;
   hp?: number;
-  description?: string;
+  description?: string; // flavor text
   variants?: CardVariants;
 }
 

@@ -20,7 +20,7 @@ import Animated, {
   interpolate,
 } from 'react-native-reanimated';
 import { Card3D } from '@/components/cards/Card3D';
-import { PriceChart } from '@/components/charts/PriceChart';
+import { PriceChart, Range } from '@/components/charts/PriceChart';
 import { Icon } from '@/components/ui/Icon';
 import { useCard, useCardPricing } from '@/lib/api/cards';
 import { sliceHistoryForRange, changForRange, avgForRange } from '@/lib/api/pricing';
@@ -28,8 +28,6 @@ import { useBinders, useAddCardToBinder, useCreateBinder } from '@/lib/api/binde
 import { useIsInCollection, useAddToCollection, useRemoveFromCollection } from '@/lib/db/collection';
 import { Colors, FontFamily, Spacing, Radius } from '@/constants/theme';
 import { CardVariants, cardBaseName, cardNameVariant } from '@/types';
-
-type Range = '1W' | '1M' | '6M' | '1Y' | 'ALL';
 
 const TONE_PAIRS: [string, string][] = [
   ['#1F0E3A', '#7A6BFF'],
@@ -81,11 +79,6 @@ function VariantChips({ variants }: { variants?: CardVariants }) {
           </View>
         </LinearGradient>
       )}
-      {variants.wPromo && (
-        <View style={[styles.chip, styles.chipPromo]}>
-          <Text style={styles.chipPromoText}>★ PROMO</Text>
-        </View>
-      )}
       {variants.firstEdition && (
         <View style={[styles.chip, styles.chipFirstEd]}>
           <Text style={styles.chipFirstEdText}>1ST ED</Text>
@@ -98,7 +91,7 @@ function VariantChips({ variants }: { variants?: CardVariants }) {
 
 export default function CardDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const [range, setRange] = useState<Range>('1M');
+  const [range, setRange] = useState<Range>('30D');
   const [binderSheetOpen, setBinderSheetOpen] = useState(false);
   const [newBinderMode, setNewBinderMode] = useState(false);
   const [newBinderName, setNewBinderName] = useState('');
@@ -107,14 +100,7 @@ export default function CardDetailScreen() {
 
   const { data: card, isLoading: cardLoading } = useCard(id ?? '');
   const { data: pricing } = useCardPricing(card);
-  const showMinMax = range === '1Y' || range === 'ALL';
-  const priceHistory = showMinMax ? [] : sliceHistoryForRange(pricing?.price_history ?? [], range);
-  const minMax = showMinMax ? {
-    low:          range === '1Y' ? (pricing?.min_1y ?? null)       : (pricing?.min_all_time ?? null),
-    high:         range === '1Y' ? (pricing?.max_1y ?? null)       : (pricing?.max_all_time ?? null),
-    label:        range === '1Y' ? '52W' : 'ALL TIME',
-    currentPrice: pricing?.price_usd ?? null,
-  } : null;
+  const priceHistory = sliceHistoryForRange(pricing?.price_history ?? [], range);
   const { data: binders = [] } = useBinders();
   const addCardToBinder = useAddCardToBinder();
   const createBinder = useCreateBinder();
@@ -148,7 +134,7 @@ export default function CardDetailScreen() {
 
   const price = pricing?.price_usd ?? null;
   const { value: changeValue, label: changeLabel } = changForRange(pricing, range);
-  const { value: avgValue, label: avgLabel } = avgForRange(pricing, range);
+  const { value: avgValue,    label: avgLabel    } = avgForRange(pricing, range);
 
   return (
     <View style={styles.root}>
@@ -218,34 +204,32 @@ export default function CardDetailScreen() {
               ) : (
                 <Text style={styles.priceNumber}>—</Text>
               )}
-              {!showMinMax && avgValue != null && (
+              {avgValue != null && (
                 <Text style={styles.avgInline}>
                   {avgLabel} · ${fmt(avgValue)}
                 </Text>
               )}
             </View>
-            {!showMinMax && (
-              <View style={styles.changeBox}>
-                <Text style={styles.panelLabel}>{changeLabel}</Text>
-                {changeValue != null ? (
-                  <View style={styles.changeRow}>
-                    <Icon
-                      name={changeValue >= 0 ? 'arrow-up' : 'arrow-down'}
-                      size={12}
-                      color={changeValue >= 0 ? Colors.up : Colors.down}
-                    />
-                    <Text style={[styles.changePct, { color: changeValue >= 0 ? Colors.up : Colors.down }]}>
-                      {changeValue >= 0 ? '+' : ''}{Math.abs(changeValue).toFixed(1)}%
-                    </Text>
-                  </View>
-                ) : (
-                  <Text style={styles.changePct}>—</Text>
-                )}
-              </View>
-            )}
+            <View style={styles.changeBox}>
+              <Text style={styles.panelLabel}>{changeLabel}</Text>
+              {changeValue != null ? (
+                <View style={styles.changeRow}>
+                  <Icon
+                    name={changeValue >= 0 ? 'arrow-up' : 'arrow-down'}
+                    size={12}
+                    color={changeValue >= 0 ? Colors.up : Colors.down}
+                  />
+                  <Text style={[styles.changePct, { color: changeValue >= 0 ? Colors.up : Colors.down }]}>
+                    {changeValue >= 0 ? '+' : ''}{Math.abs(changeValue).toFixed(1)}%
+                  </Text>
+                </View>
+              ) : (
+                <Text style={styles.changePct}>—</Text>
+              )}
+            </View>
           </View>
 
-          <PriceChart data={priceHistory} range={range} onRangeChange={setRange} minMax={minMax} />
+          <PriceChart data={priceHistory} range={range} onRangeChange={setRange} />
         </View>
 
         {/* Card info */}
@@ -517,16 +501,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     letterSpacing: 1.2,
     color: '#A29AFF',
-  },
-  chipPromo: {
-    borderColor: 'rgba(0,210,180,0.5)',
-    backgroundColor: 'rgba(0,210,180,0.1)',
-  },
-  chipPromoText: {
-    fontFamily: FontFamily.mono,
-    fontSize: 10,
-    letterSpacing: 1.2,
-    color: '#00D2B4',
   },
   chipFirstEd: {
     borderColor: 'rgba(255,215,0,0.65)',

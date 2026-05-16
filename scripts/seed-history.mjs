@@ -51,7 +51,8 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const MAX_RETRIES = 3;
 
 async function fetchHistory(cardId) {
-  const url = `${BASE}/cards/${cardId}/price_history?days=${DAYS}&casing=snake`;
+  // Request only NM raw history — avoids fetching LP/MP/DM/graded rows we don't store.
+  const url = `${BASE}/cards/${cardId}/price_history?days=${DAYS}&condition=NM&casing=snake`;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const res = await fetch(url, {
       headers: { 'X-Api-Key': SCRYDEX_API_KEY, 'X-Team-ID': SCRYDEX_TEAM_ID, Accept: 'application/json' },
@@ -123,21 +124,21 @@ async function main() {
 
         const rows = [];
         for (const entry of resp.data) {
-          // entry.variant identifies which variant this snapshot belongs to
-          const variantId = variantIdMap.get(entry.variant);
-          if (!variantId) continue;
-
           for (const p of entry.prices ?? []) {
+            // variant is a field on each price, not on the date entry
+            if (p.type !== 'raw' || p.condition !== 'NM') continue;
+            const variantId = variantIdMap.get(p.variant);
+            if (!variantId) continue;
             rows.push({
               variant_id:    variantId,
               snapshot_date: entry.date,
-              type:          p.type,
-              condition:     p.condition || '',
+              type:          'raw',
+              condition:     'NM',
               grader:        '',
               grade:         '',
-              is_perfect:    p.is_perfect ?? false,
-              is_signed:     p.is_signed  ?? false,
-              is_error:      p.is_error   ?? false,
+              is_perfect:    false,
+              is_signed:     false,
+              is_error:      false,
               low:           p.low    ?? null,
               market:        p.market ?? null,
               currency:      p.currency ?? 'USD',
