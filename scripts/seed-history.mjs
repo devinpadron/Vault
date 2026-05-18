@@ -4,17 +4,19 @@
  * Backfills card_price_history from the Scrydex API for all cards that
  * already have current prices in card_prices_current.
  *
- * Run this once after seed-catalog.mjs to populate enough history for the
- * price chart sparklines to render. After that, the daily Edge Function
- * cron handles incremental appends.
+ * Run this once after seed-catalog.mjs to populate price history. After that,
+ * the daily Edge Function cron handles incremental appends.
  *
  * Usage:
  *   SCRYDEX_API_KEY=... SCRYDEX_TEAM_ID=... \
  *   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... \
- *   node --env-file=.env seed-history.mjs [--days 90] [--batch 40]
+ *   node --env-file=.env seed-history.mjs [--days 3650] [--batch 40]
  *
  * Options:
- *   --days   How many days back to fetch (default: 90)
+ *   --days   How many days back to fetch. Scrydex doesn't publish a maximum;
+ *            the default (3650 = ~10 years) effectively asks for everything
+ *            they have. The API returns only what's available — earlier dates
+ *            with no data won't appear in the response.
  *   --batch  Cards fetched in parallel per round (default: 40)
  *            Lower this if you hit Scrydex rate limits.
  */
@@ -30,7 +32,7 @@ const SUPABASE_KEY    = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const BASE            = 'https://api.scrydex.com/pokemon/v1';
 
 const args  = process.argv.slice(2);
-const DAYS  = Number(argValue(args, '--days')  ?? 90);
+const DAYS  = Number(argValue(args, '--days')  ?? 3650);
 const BATCH = Number(argValue(args, '--batch') ?? 40);
 
 // ─── Validation ───────────────────────────────────────────────────────────────

@@ -6,7 +6,16 @@
 // Chain calls by incrementing cardPage until nextCardPage is null.
 
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import { ScrydexClient, ScrydexCardBrief, ScrydexVariant } from '../scrydex.ts';
+import { ScrydexClient, ScrydexCardBrief, ScrydexCardFull, ScrydexVariant } from '../scrydex.ts';
+
+// Scrydex documents converted_retreat_cost as string; some responses return
+// number. Normalize to integer for the column.
+function normalizeIntField(v: string | number | null | undefined): number | null {
+  if (v == null) return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : null;
+}
 
 export interface MetadataOpts {
   expansionId: string;
@@ -91,33 +100,46 @@ export async function syncMetadata(
   );
 
   // ── Upsert cards ──────────────────────────────────────────────────────────
-  const cardRows = cards.map((c: ScrydexCardBrief) => ({
-    id:                       c.id,
-    expansion_id:             expansion.id,
-    name:                     c.name,
-    supertype:                c.supertype ?? null,
-    subtypes:                 c.subtypes ?? null,
-    types:                    c.types ?? null,
-    hp:                       c.hp ?? null,
-    number:                   c.number,
-    printed_number:           c.printed_number ?? null,
-    rarity:                   c.rarity ?? null,
-    rarity_code:              c.rarity_code ?? null,
-    artist:                   c.artist ?? null,
-    expansion_sort_order:     c.expansion_sort_order ?? null,
-    language_code:            c.language_code ?? null,
-    // Full fields available on ScrydexCardFull — absent on brief
-    flavor_text:              (c as unknown as Record<string, unknown>).flavor_text as string ?? null,
-    national_pokedex_numbers: (c as unknown as Record<string, unknown>).national_pokedex_numbers as number[] ?? null,
-    regulation_mark:          (c as unknown as Record<string, unknown>).regulation_mark as string ?? null,
-    abilities:                (c as unknown as Record<string, unknown>).abilities ?? null,
-    attacks:                  (c as unknown as Record<string, unknown>).attacks ?? null,
-    weaknesses:               (c as unknown as Record<string, unknown>).weaknesses ?? null,
-    resistances:              (c as unknown as Record<string, unknown>).resistances ?? null,
-    retreat_cost:             (c as unknown as Record<string, unknown>).retreat_cost as string[] ?? null,
-    raw_payload:              c as unknown,
-    synced_at:                new Date().toISOString(),
-  }));
+  // Treat the list response as potentially-full: Scrydex sometimes returns the
+  // full payload even on list endpoints. Missing fields just stay null.
+  const cardRows = cards.map((c: ScrydexCardBrief) => {
+    const full = c as unknown as ScrydexCardFull;
+    return {
+      id:                       c.id,
+      expansion_id:             expansion.id,
+      name:                     c.name,
+      supertype:                c.supertype ?? null,
+      subtypes:                 c.subtypes ?? null,
+      types:                    c.types ?? null,
+      hp:                       c.hp ?? null,
+      number:                   c.number,
+      printed_number:           c.printed_number ?? null,
+      rarity:                   c.rarity ?? null,
+      rarity_code:              c.rarity_code ?? null,
+      artist:                   c.artist ?? null,
+      expansion_sort_order:     c.expansion_sort_order ?? null,
+      language:                 c.language ?? null,
+      language_code:            c.language_code ?? null,
+      // Game-mechanics fields (full-payload only — null on strict brief responses)
+      flavor_text:              full.flavor_text ?? null,
+      national_pokedex_numbers: full.national_pokedex_numbers ?? null,
+      regulation_mark:          full.regulation_mark ?? null,
+      abilities:                full.abilities ?? null,
+      attacks:                  full.attacks ?? null,
+      weaknesses:               full.weaknesses ?? null,
+      resistances:              full.resistances ?? null,
+      retreat_cost:             full.retreat_cost ?? null,
+      converted_retreat_cost:   normalizeIntField(full.converted_retreat_cost),
+      // Vintage / metagame extras
+      level:                    full.level ?? null,
+      evolves_from:             full.evolves_from ?? null,
+      rules:                    full.rules ?? null,
+      ancient_trait:            full.ancient_trait ?? null,
+      translation:              full.translation ?? null,
+      raw_payload:              c as unknown,
+      synced_at:                new Date().toISOString(),
+    };
+  });
 
   await supabase.from('cards').upsert(cardRows, { onConflict: 'id' });
 
@@ -159,37 +181,39 @@ export async function syncMetadata(
           .map(v => [`${v.card_id}:${v.name}`, v.id]),
       );
 
-      // 2. Build price rows
+      // 2. Build price rows. Skip `type='graded'` entries — Scrydex's include=prices
+      // payload doesn't expose grader/grade, so graded prices land via card_listings
+      // (see phases/listings.ts) instead.
       const now = new Date().toISOString();
       const priceRows = cardsWithVariants.flatMap((c: ScrydexCardBrief) =>
         (c.variants as ScrydexVariant[]).flatMap(v => {
           const variantId = variantIdMap.get(`${c.id}:${v.name}`);
           if (!variantId) return [];
-          return v.prices.map(p => ({
-            variant_id:       variantId,
-            type:             p.type,
-            condition:        p.condition || '',
-            grader:           '',
-            grade:            '',
-            is_perfect:       p.is_perfect,
-            is_signed:        p.is_signed,
-            is_error:         p.is_error,
-            low:              p.low ?? null,
-            market:           p.market ?? null,
-            mid:              null,
-            high:             null,
-            currency:         p.currency ?? 'USD',
-            trend_1d_change:  p.trends?.days_1?.price_change ?? null,
-            trend_1d_pct:     p.trends?.days_1?.percent_change ?? null,
-            trend_7d_change:  p.trends?.days_7?.price_change ?? null,
-            trend_7d_pct:     p.trends?.days_7?.percent_change ?? null,
-            trend_30d_change: p.trends?.days_30?.price_change ?? null,
-            trend_30d_pct:    p.trends?.days_30?.percent_change ?? null,
-            trend_90d_change: p.trends?.days_90?.price_change ?? null,
-            trend_90d_pct:    p.trends?.days_90?.percent_change ?? null,
-            raw_payload:      p,
-            synced_at:        now,
-          }));
+          return v.prices
+            .filter(p => p.type !== 'graded')
+            .map(p => ({
+              variant_id:       variantId,
+              type:             p.type,
+              condition:        p.condition || '',
+              grader:           '',
+              grade:            '',
+              is_perfect:       p.is_perfect,
+              is_signed:        p.is_signed,
+              is_error:         p.is_error,
+              low:              p.low ?? null,
+              market:           p.market ?? null,
+              currency:         p.currency ?? 'USD',
+              trend_1d_change:  p.trends?.days_1?.price_change ?? null,
+              trend_1d_pct:     p.trends?.days_1?.percent_change ?? null,
+              trend_7d_change:  p.trends?.days_7?.price_change ?? null,
+              trend_7d_pct:     p.trends?.days_7?.percent_change ?? null,
+              trend_30d_change: p.trends?.days_30?.price_change ?? null,
+              trend_30d_pct:    p.trends?.days_30?.percent_change ?? null,
+              trend_90d_change: p.trends?.days_90?.price_change ?? null,
+              trend_90d_pct:    p.trends?.days_90?.percent_change ?? null,
+              raw_payload:      p,
+              synced_at:        now,
+            }));
         }),
       );
 

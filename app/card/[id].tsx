@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Alert,
   Modal,
@@ -22,12 +22,15 @@ import Animated, {
 import { Card3D } from '@/components/cards/Card3D';
 import { PriceChart, Range } from '@/components/charts/PriceChart';
 import { Icon } from '@/components/ui/Icon';
+import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { useCard, useCardPricing } from '@/lib/api/cards';
-import { sliceHistoryForRange, changForRange, avgForRange } from '@/lib/api/pricing';
+import { sliceHistoryForRange, changForRange, avgForRange, GradedOption } from '@/lib/api/pricing';
+import { formatVariantName } from '@/lib/api/types';
 import { useBinders, useAddCardToBinder, useCreateBinder } from '@/lib/api/binders';
 import { useIsInCollection, useAddToCollection, useRemoveFromCollection } from '@/lib/db/collection';
+import { useIsWishlisted, useAddToWishlist, useRemoveFromWishlist } from '@/lib/db/wishlist';
 import { Colors, FontFamily, Spacing, Radius } from '@/constants/theme';
-import { CardVariants, cardBaseName, cardNameVariant } from '@/types';
+import { Card, CardVariants, cardBaseName, cardNameVariant } from '@/types';
 
 const TONE_PAIRS: [string, string][] = [
   ['#1F0E3A', '#7A6BFF'],
@@ -41,6 +44,60 @@ const TONE_PAIRS: [string, string][] = [
 function fmt(n: number) {
   if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
   return n.toFixed(2);
+}
+
+// Compact notation for matrix cells where horizontal space is tight.
+// $42 / $245 / $1.2k / $42k
+function fmtCompact(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 10000) return `${Math.round(n / 1000)}k`;
+  if (abs >= 1000)  return `${(n / 1000).toFixed(1)}k`;
+  if (abs >= 100)   return String(Math.round(n));
+  return n.toFixed(2);
+}
+
+const GRADER_ORDER: Record<string, number> = { PSA: 0, CGC: 1, BGS: 2, TAG: 3, ACE: 4 };
+
+function GradeMatrix({ options }: { options: GradedOption[] }) {
+  // Pivot: rows = grades, columns = companies. Hide empty companies/grades.
+  const companies = Array.from(new Set(options.map(o => o.grader)))
+    .sort((a, b) => (GRADER_ORDER[a] ?? 99) - (GRADER_ORDER[b] ?? 99));
+  const grades = Array.from(new Set(options.map(o => o.grade)))
+    .sort((a, b) => parseFloat(b) - parseFloat(a));
+  const cell = new Map<string, number | null>();
+  for (const o of options) cell.set(`${o.grader}-${o.grade}`, o.market);
+
+  return (
+    <View style={styles.matrix}>
+      {/* Header row */}
+      <View style={[styles.matrixRow, styles.matrixHeaderRow]}>
+        <Text style={[styles.matrixCell, styles.matrixHeader, styles.matrixGradeColumn]}>GRADE</Text>
+        {companies.map(c => (
+          <Text key={c} style={[styles.matrixCell, styles.matrixHeader]}>{c}</Text>
+        ))}
+      </View>
+
+      {/* Body */}
+      {grades.map(g => (
+        <View key={g} style={styles.matrixRow}>
+          <Text style={[styles.matrixCell, styles.matrixGradeColumn, styles.matrixGradeLabel]}>
+            {g}
+          </Text>
+          {companies.map(c => {
+            const price = cell.get(`${c}-${g}`);
+            return (
+              <Text
+                key={c}
+                style={[styles.matrixCell, price == null && styles.matrixCellEmpty]}
+              >
+                {price != null ? `$${fmtCompact(price)}` : '—'}
+              </Text>
+            );
+          })}
+        </View>
+      ))}
+    </View>
+  );
 }
 
 // Renders one chip per active variant. Skips 'normal' (no badge needed).
@@ -89,6 +146,140 @@ function VariantChips({ variants }: { variants?: CardVariants }) {
   );
 }
 
+// True when the card has any rich Pokémon-card detail worth surfacing.
+function hasCardDetails(card: Card): boolean {
+  return Boolean(
+    card.hp ||
+      card.regulation_mark ||
+      card.national_pokedex_numbers?.length ||
+      card.subtypes?.length ||
+      card.abilities?.length ||
+      card.attacks?.length ||
+      card.weaknesses?.length ||
+      card.resistances?.length ||
+      card.retreatCost?.length ||
+      card.description,
+  );
+}
+
+function EnergyCost({ cost }: { cost: string[] }) {
+  if (!cost.length) return <Text style={styles.detailMuted}>Free</Text>;
+  return (
+    <View style={styles.energyRow}>
+      {cost.map((t, i) => (
+        <View key={`${t}-${i}`} style={styles.energyChip}>
+          <Text style={styles.energyChipText}>{t.slice(0, 1).toUpperCase()}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function CardDetailsSection({ card }: { card: Card }) {
+  return (
+    <View style={[styles.metaPanel, { marginBottom: 20 }]}>
+      <Text style={styles.metaHeader}>Card Details</Text>
+
+      <View style={styles.detailsBody}>
+        {/* Quick facts row — HP, type, subtypes, regulation, pokedex */}
+          {(card.hp ||
+            card.supertype ||
+            card.subtypes?.length ||
+            card.regulation_mark ||
+            card.national_pokedex_numbers?.length) && (
+            <View style={styles.quickRow}>
+              {card.hp != null && (
+                <View style={styles.factChip}>
+                  <Text style={styles.factLabel}>HP</Text>
+                  <Text style={styles.factValue}>{card.hp}</Text>
+                </View>
+              )}
+              {card.supertype && (
+                <View style={styles.factChip}>
+                  <Text style={styles.factLabel}>TYPE</Text>
+                  <Text style={styles.factValue}>{card.supertype}</Text>
+                </View>
+              )}
+              {card.regulation_mark && (
+                <View style={styles.factChip}>
+                  <Text style={styles.factLabel}>REG</Text>
+                  <Text style={styles.factValue}>{card.regulation_mark}</Text>
+                </View>
+              )}
+              {card.national_pokedex_numbers?.length ? (
+                <View style={styles.factChip}>
+                  <Text style={styles.factLabel}>DEX</Text>
+                  <Text style={styles.factValue}>
+                    #{card.national_pokedex_numbers.join(', #')}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          )}
+
+          {card.subtypes?.length ? (
+            <View style={styles.detailSection}>
+              <Text style={styles.detailEyebrow}>Subtypes</Text>
+              <Text style={styles.detailBody}>{card.subtypes.join(' · ')}</Text>
+            </View>
+          ) : null}
+
+          {card.abilities?.map((a, i) => (
+            <View key={`ability-${i}`} style={styles.detailSection}>
+              <Text style={styles.detailEyebrow}>{a.type || 'Ability'}</Text>
+              <Text style={styles.detailTitle}>{a.name}</Text>
+              {a.text ? <Text style={styles.detailBody}>{a.text}</Text> : null}
+            </View>
+          ))}
+
+          {card.attacks?.map((a, i) => (
+            <View key={`attack-${i}`} style={styles.detailSection}>
+              <View style={styles.attackHeader}>
+                <EnergyCost cost={a.cost} />
+                <Text style={styles.detailTitle}>{a.name}</Text>
+                {a.damage ? <Text style={styles.attackDamage}>{a.damage}</Text> : null}
+              </View>
+              {a.text ? <Text style={styles.detailBody}>{a.text}</Text> : null}
+            </View>
+          ))}
+
+          {(card.weaknesses?.length || card.resistances?.length || card.retreatCost?.length) && (
+            <View style={styles.detailSection}>
+              {card.weaknesses?.length ? (
+                <View style={styles.kvRow}>
+                  <Text style={styles.detailEyebrow}>Weakness</Text>
+                  <Text style={styles.detailValue}>
+                    {card.weaknesses.map(w => `${w.type} ${w.value}`).join(' · ')}
+                  </Text>
+                </View>
+              ) : null}
+              {card.resistances?.length ? (
+                <View style={styles.kvRow}>
+                  <Text style={styles.detailEyebrow}>Resistance</Text>
+                  <Text style={styles.detailValue}>
+                    {card.resistances.map(r => `${r.type} ${r.value}`).join(' · ')}
+                  </Text>
+                </View>
+              ) : null}
+              {card.retreatCost?.length ? (
+                <View style={styles.kvRow}>
+                  <Text style={styles.detailEyebrow}>Retreat</Text>
+                  <EnergyCost cost={card.retreatCost} />
+                </View>
+              ) : null}
+            </View>
+          )}
+
+          {card.description ? (
+            <View style={styles.detailSection}>
+              <Text style={styles.detailFlavor}>&ldquo;{card.description}&rdquo;</Text>
+            </View>
+          ) : null}
+      </View>
+    </View>
+  );
+}
+
 export default function CardDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [range, setRange] = useState<Range>('30D');
@@ -99,12 +290,52 @@ export default function CardDetailScreen() {
   const insets = useSafeAreaInsets();
 
   const [selectedVariantId, setSelectedVariantId] = useState<string | undefined>(undefined);
+  const [priceMode, setPriceMode] = useState<'raw' | 'graded'>('raw');
+  const [selectedGradedVariant, setSelectedGradedVariant] = useState<string | null>(null);
 
-  const { data: card, isLoading: cardLoading } = useCard(id ?? '');
+  const {
+    data: card,
+    isLoading: cardLoading,
+    isError: cardError,
+    error: cardErrorObj,
+    refetch: refetchCard,
+  } = useCard(id ?? '');
 
   // Default to the first (highest-priced) variant; user selection overrides.
+  // Pricing always queries Raw; graded uses the gradedOptions matrix and
+  // doesn't need a per-grade fetch — the table shows every grade at once.
   const activeVariantId = selectedVariantId ?? card?.variantPrices?.[0]?.id;
   const { data: pricing } = useCardPricing(card, activeVariantId);
+  const gradedOptions = useMemo(() => pricing?.graded_options ?? [], [pricing?.graded_options]);
+
+  // Each card_listings row is tied to one Scrydex variant ("holofoil",
+  // "reverseHolofoil", …). Graded prices for the same grade can differ across
+  // variants, so we group by variant and let the user pick which one to view.
+  const gradedVariants = useMemo(
+    () => Array.from(new Set(gradedOptions.map(o => o.variant))),
+    [gradedOptions],
+  );
+
+  // Keep the selected graded variant valid when the option set changes.
+  useEffect(() => {
+    if (gradedVariants.length === 0) {
+      if (selectedGradedVariant !== null) setSelectedGradedVariant(null);
+      return;
+    }
+    if (!selectedGradedVariant || !gradedVariants.includes(selectedGradedVariant)) {
+      // Prefer the variant the user already selected in Raw mode, if it has
+      // graded data; otherwise fall back to the first available.
+      const rawVariantName = card?.variantPrices?.find(v => v.id === activeVariantId)?.name;
+      const matchesRaw = rawVariantName && gradedVariants.includes(rawVariantName);
+      setSelectedGradedVariant(matchesRaw ? rawVariantName! : gradedVariants[0]);
+    }
+  }, [gradedVariants, selectedGradedVariant, card, activeVariantId]);
+
+  const filteredGradedOptions = useMemo(
+    () => gradedOptions.filter(o => o.variant === selectedGradedVariant),
+    [gradedOptions, selectedGradedVariant],
+  );
+
   const priceHistory = sliceHistoryForRange(pricing?.price_history ?? [], range);
   const { data: binders = [] } = useBinders();
   const addCardToBinder = useAddCardToBinder();
@@ -112,6 +343,9 @@ export default function CardDetailScreen() {
   const { data: isInCollection = false } = useIsInCollection(card?.id ?? '');
   const addToCollection = useAddToCollection();
   const removeFromCollection = useRemoveFromCollection();
+  const { data: isWishlisted = false } = useIsWishlisted(card?.id ?? '');
+  const addToWishlist = useAddToWishlist();
+  const removeFromWishlist = useRemoveFromWishlist();
 
   function openSheet() {
     setNewBinderMode(false);
@@ -134,8 +368,43 @@ export default function CardDetailScreen() {
     setNewBinderName('');
   }
 
-  if (cardLoading) return null;
-  if (!card) return null;
+  if (cardLoading) {
+    return (
+      <View style={[styles.root, styles.fullScreenCentered, { paddingTop: insets.top + 8 }]}>
+        <TouchableOpacity style={styles.navBtnStandalone} onPress={() => router.back()}>
+          <Icon name="chevron-left" size={18} color={Colors.text} />
+        </TouchableOpacity>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={styles.loadingText}>Loading card…</Text>
+        </View>
+      </View>
+    );
+  }
+  if (cardError) {
+    return (
+      <View style={[styles.root, styles.fullScreenCentered, { paddingTop: insets.top + 8 }]}>
+        <TouchableOpacity style={styles.navBtnStandalone} onPress={() => router.back()}>
+          <Icon name="chevron-left" size={18} color={Colors.text} />
+        </TouchableOpacity>
+        <View style={{ flex: 1, justifyContent: 'center' }}>
+          <ErrorPanel message="Couldn't load this card" error={cardErrorObj} onRetry={refetchCard} />
+        </View>
+      </View>
+    );
+  }
+  if (!card) {
+    return (
+      <View style={[styles.root, styles.fullScreenCentered, { paddingTop: insets.top + 8 }]}>
+        <TouchableOpacity style={styles.navBtnStandalone} onPress={() => router.back()}>
+          <Icon name="chevron-left" size={18} color={Colors.text} />
+        </TouchableOpacity>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+          <Text style={styles.emptyTitle}>Card not found</Text>
+          <Text style={styles.emptySubtitle}>This card may have been removed or hasn&apos;t synced yet.</Text>
+        </View>
+      </View>
+    );
+  }
 
   const price = pricing?.price_usd ?? null;
   const { value: changeValue, label: changeLabel } = changForRange(pricing, range);
@@ -154,8 +423,15 @@ export default function CardDetailScreen() {
             <Icon name="chevron-left" size={18} color={Colors.text} />
           </TouchableOpacity>
           <View style={styles.navActions}>
-            <TouchableOpacity style={styles.navBtn}>
-              <Icon name="heart" size={18} color={Colors.text} />
+            <TouchableOpacity
+              style={[styles.navBtn, isWishlisted && styles.navBtnActive]}
+              onPress={() =>
+                isWishlisted ? removeFromWishlist(card.id) : addToWishlist(card)
+              }
+              accessibilityRole="button"
+              accessibilityLabel={isWishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
+            >
+              <Icon name="heart" size={18} color={isWishlisted ? Colors.gold : Colors.text} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.navBtn}>
               <Icon name="send" size={18} color={Colors.text} />
@@ -196,8 +472,29 @@ export default function CardDetailScreen() {
           </View>
         </View>
 
-        {/* Variant selector — only shown when multiple priced variants exist */}
-        {(card.variantPrices?.length ?? 0) > 1 && (
+        {/* Raw / Graded segment — only when graded data exists */}
+        {gradedOptions.length > 0 && (
+          <View style={styles.modeSegmentWrap}>
+            <View style={styles.modeSegment}>
+              {(['raw', 'graded'] as const).map(m => (
+                <TouchableOpacity
+                  key={m}
+                  style={[styles.modeSegmentBtn, priceMode === m && styles.modeSegmentBtnActive]}
+                  onPress={() => setPriceMode(m)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Show ${m} prices`}
+                >
+                  <Text style={[styles.modeSegmentText, priceMode === m && styles.modeSegmentTextActive]}>
+                    {m === 'raw' ? 'Raw' : 'Graded'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Raw: variant pills — only when multiple priced variants exist */}
+        {priceMode === 'raw' && (card.variantPrices?.length ?? 0) > 1 && (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -205,7 +502,7 @@ export default function CardDetailScreen() {
             style={styles.variantRow}
           >
             {card.variantPrices!.map(v => {
-              const isActive = (activeVariantId) === v.id;
+              const isActive = activeVariantId === v.id;
               return (
                 <TouchableOpacity
                   key={v.id}
@@ -227,49 +524,89 @@ export default function CardDetailScreen() {
           </ScrollView>
         )}
 
-        {/* Price module */}
-        <View style={[styles.panel, { marginBottom: 16 }]}>
-          <View style={styles.priceHeader}>
-            <View>
-              <Text style={styles.panelLabel}>Market Price</Text>
-              {price != null ? (
-                <View style={styles.priceValue}>
-                  <Text style={styles.priceDollar}>$</Text>
-                  <Text style={styles.priceNumber}>{fmt(price)}</Text>
-                </View>
-              ) : (
-                <Text style={styles.priceNumber}>—</Text>
-              )}
-              {avgValue != null && (
-                <Text style={styles.avgInline}>
-                  {avgLabel} · ${fmt(avgValue)}
+        {/* Price module — Raw has chart, Graded has a grade × company matrix */}
+        {priceMode === 'raw' ? (
+          <View style={[styles.panel, { marginBottom: 16 }]}>
+            <View style={styles.priceHeader}>
+              <View>
+                <Text style={styles.panelLabel}>Market Price</Text>
+                {price != null ? (
+                  <View style={styles.priceValue}>
+                    <Text style={styles.priceDollar}>$</Text>
+                    <Text style={styles.priceNumber}>{fmt(price)}</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.priceNumber}>—</Text>
+                )}
+                {avgValue != null && (
+                  <Text style={styles.avgInline}>
+                    {avgLabel} · ${fmt(avgValue)}
+                  </Text>
+                )}
+              </View>
+              <View style={styles.changeBox}>
+                <Text style={styles.panelLabel}>{changeLabel}</Text>
+                {changeValue != null ? (
+                  <View style={styles.changeRow}>
+                    <Icon
+                      name={changeValue >= 0 ? 'arrow-up' : 'arrow-down'}
+                      size={12}
+                      color={changeValue >= 0 ? Colors.up : Colors.down}
+                    />
+                    <Text style={[styles.changePct, { color: changeValue >= 0 ? Colors.up : Colors.down }]}>
+                      {changeValue >= 0 ? '+' : ''}{Math.abs(changeValue).toFixed(1)}%
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.changePct}>—</Text>
+                )}
+              </View>
+            </View>
+
+            <PriceChart data={priceHistory} range={range} onRangeChange={setRange} />
+          </View>
+        ) : (
+          <View style={[styles.panel, { marginBottom: 16 }]}>
+            <View style={styles.gradedHeader}>
+              <Text style={styles.panelLabel}>Graded · By Company</Text>
+              {selectedGradedVariant && (
+                <Text style={styles.gradedVariantLabel}>
+                  {formatVariantName(selectedGradedVariant)}
                 </Text>
               )}
             </View>
-            <View style={styles.changeBox}>
-              <Text style={styles.panelLabel}>{changeLabel}</Text>
-              {changeValue != null ? (
-                <View style={styles.changeRow}>
-                  <Icon
-                    name={changeValue >= 0 ? 'arrow-up' : 'arrow-down'}
-                    size={12}
-                    color={changeValue >= 0 ? Colors.up : Colors.down}
-                  />
-                  <Text style={[styles.changePct, { color: changeValue >= 0 ? Colors.up : Colors.down }]}>
-                    {changeValue >= 0 ? '+' : ''}{Math.abs(changeValue).toFixed(1)}%
-                  </Text>
-                </View>
-              ) : (
-                <Text style={styles.changePct}>—</Text>
-              )}
-            </View>
-          </View>
 
-          <PriceChart data={priceHistory} range={range} onRangeChange={setRange} />
-        </View>
+            {gradedVariants.length > 1 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.gradedVariantRow}
+                style={styles.gradedVariantScroll}
+              >
+                {gradedVariants.map(v => {
+                  const isActive = v === selectedGradedVariant;
+                  return (
+                    <TouchableOpacity
+                      key={v}
+                      style={[styles.gradedVariantPill, isActive && styles.gradedVariantPillActive]}
+                      onPress={() => setSelectedGradedVariant(v)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.gradedVariantPillText, isActive && styles.gradedVariantPillTextActive]}>
+                        {formatVariantName(v)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+
+            <GradeMatrix options={filteredGradedOptions} />
+          </View>
+        )}
 
         {/* Card info */}
-        <View style={[styles.metaPanel, { marginBottom: 20 }]}>
+        <View style={[styles.metaPanel, { marginBottom: 16 }]}>
           <Text style={styles.metaHeader}>Card Info</Text>
           {[
             ['Artist',   card.artist],
@@ -284,6 +621,9 @@ export default function CardDetailScreen() {
             </View>
           ))}
         </View>
+
+        {/* Card details — always visible */}
+        {hasCardDetails(card) && <CardDetailsSection card={card} />}
 
         {/* CTAs */}
         <View style={styles.ctaRow}>
@@ -446,6 +786,43 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.line,
     backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  navBtnActive: {
+    borderColor: 'rgba(255,215,0,0.4)',
+    backgroundColor: 'rgba(255,215,0,0.1)',
+  },
+  fullScreenCentered: {
+    paddingHorizontal: Spacing.lg,
+  },
+  navBtnStandalone: {
+    width: 38,
+    height: 38,
+    borderRadius: Radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    alignSelf: 'flex-start',
+  },
+  loadingText: {
+    fontFamily: FontFamily.body,
+    fontSize: 14,
+    color: Colors.text3,
+  },
+  emptyTitle: {
+    fontFamily: FontFamily.display,
+    fontSize: 22,
+    color: Colors.text3,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontFamily: FontFamily.body,
+    fontSize: 13,
+    color: Colors.text3,
+    textAlign: 'center',
+    lineHeight: 19,
   },
   // Hero
   heroSection: {
@@ -626,6 +1003,118 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.text,
   },
+  // Price mode segment
+  modeSegmentWrap: {
+    paddingHorizontal: Spacing.xl,
+    marginBottom: 10,
+  },
+  modeSegment: {
+    flexDirection: 'row',
+    padding: 4,
+    gap: 4,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: Colors.surface,
+    alignSelf: 'flex-start',
+  },
+  modeSegmentBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: Radius.sm,
+  },
+  modeSegmentBtnActive: {
+    backgroundColor: Colors.elevated,
+  },
+  modeSegmentText: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    color: Colors.text3,
+  },
+  modeSegmentTextActive: {
+    color: Colors.text,
+  },
+  // Graded variant pill row (above the matrix)
+  gradedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  gradedVariantLabel: {
+    fontFamily: FontFamily.monoMed,
+    fontSize: 10,
+    letterSpacing: 1.2,
+    color: Colors.gold,
+  },
+  gradedVariantScroll: {
+    marginHorizontal: -16,
+    marginTop: 10,
+  },
+  gradedVariantRow: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingHorizontal: 16,
+  },
+  gradedVariantPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  gradedVariantPillActive: {
+    borderColor: 'rgba(255,215,0,0.4)',
+    backgroundColor: 'rgba(255,215,0,0.1)',
+  },
+  gradedVariantPillText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 11,
+    color: Colors.text2,
+  },
+  gradedVariantPillTextActive: {
+    color: Colors.gold,
+  },
+  // Grade matrix (graded mode)
+  matrix: {
+    marginTop: 10,
+    borderRadius: Radius.sm,
+    overflow: 'hidden',
+  },
+  matrixRow: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: Colors.line,
+  },
+  matrixHeaderRow: {
+    borderTopWidth: 0,
+  },
+  matrixCell: {
+    flex: 1,
+    paddingVertical: 10,
+    fontFamily: FontFamily.mono,
+    fontSize: 11,
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  matrixGradeColumn: {
+    flex: 0.7,
+  },
+  matrixHeader: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 1.4,
+    color: Colors.text3,
+  },
+  matrixGradeLabel: {
+    fontFamily: FontFamily.monoMed,
+    color: Colors.gold,
+  },
+  matrixCellEmpty: {
+    color: Colors.text3,
+  },
   // Variant selector
   variantRow: {
     marginBottom: 14,
@@ -701,6 +1190,119 @@ const styles = StyleSheet.create({
   metaVal: {
     fontFamily: FontFamily.mono,
     fontSize: 12,
+    color: Colors.text,
+  },
+  // Card details
+  detailsBody: {
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+    gap: 14,
+    borderTopWidth: 1,
+    borderTopColor: Colors.line,
+    paddingTop: 14,
+    backgroundColor: Colors.bg,
+  },
+  quickRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  factChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: Colors.surface,
+  },
+  factLabel: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 1.2,
+    color: Colors.text3,
+  },
+  factValue: {
+    fontFamily: FontFamily.monoMed,
+    fontSize: 11,
+    color: Colors.text,
+  },
+  detailSection: {
+    gap: 6,
+  },
+  detailEyebrow: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 1.6,
+    textTransform: 'uppercase',
+    color: Colors.text3,
+  },
+  detailTitle: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 14,
+    color: Colors.text,
+  },
+  detailBody: {
+    fontFamily: FontFamily.body,
+    fontSize: 12,
+    color: Colors.text2,
+    lineHeight: 17,
+  },
+  detailValue: {
+    fontFamily: FontFamily.mono,
+    fontSize: 11,
+    color: Colors.text,
+    flexShrink: 1,
+    textAlign: 'right',
+  },
+  detailMuted: {
+    fontFamily: FontFamily.mono,
+    fontSize: 11,
+    color: Colors.text3,
+  },
+  detailFlavor: {
+    fontFamily: FontFamily.displayItalic,
+    fontSize: 13,
+    color: Colors.text2,
+    lineHeight: 18,
+  },
+  kvRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingVertical: 4,
+  },
+  attackHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  attackDamage: {
+    fontFamily: FontFamily.monoMed,
+    fontSize: 13,
+    color: Colors.gold,
+    marginLeft: 'auto',
+  },
+  energyRow: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  energyChip: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.lineStrong,
+    backgroundColor: Colors.surface,
+  },
+  energyChipText: {
+    fontFamily: FontFamily.monoMed,
+    fontSize: 9,
     color: Colors.text,
   },
   // CTAs

@@ -5,6 +5,7 @@
 //   metadata         — upserts one expansion's cards, images, variants, initial prices
 //   prices           — re-syncs card_prices_current for one page of cards
 //   history          — appends daily price snapshots for one page of card variants
+//   listings         — backfills card_listings from /cards/{id}/listings
 //
 // Every invocation logs a row to sync_log. Chain calls using the returned
 // nextPage / nextCardPage cursor until it is null.
@@ -20,6 +21,7 @@ import { ScrydexClient } from './scrydex.ts';
 import { syncMetadata, listExpansionIds } from './phases/metadata.ts';
 import { syncPrices } from './phases/prices.ts';
 import { syncHistory } from './phases/history.ts';
+import { syncListings } from './phases/listings.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -69,11 +71,16 @@ Deno.serve(async (req: Request) => {
 
   const finishLog = async (status: 'success' | 'error', rows?: number, err?: string) => {
     if (!logId) return;
+    // Pull the last response metadata captured by ScrydexClient — gives us
+    // HTTP status and credits-used for observability and rate-limit budgeting.
+    const meta = scrydex.lastMeta;
     await supabase.from('sync_log').update({
       status,
-      rows_affected:  rows ?? null,
-      error_message:  err ?? null,
-      finished_at:    new Date().toISOString(),
+      rows_affected: rows ?? null,
+      error_message: err ?? null,
+      http_status:   meta.http_status,
+      credits_used:  meta.credits_used,
+      finished_at:   new Date().toISOString(),
     }).eq('id', logId);
   };
 
@@ -113,6 +120,14 @@ Deno.serve(async (req: Request) => {
         days:     Number(body.days     ?? 2),
       });
       await finishLog('success', (result as { snapshotCount: number }).snapshotCount);
+
+    } else if (phase === 'listings') {
+      result = await syncListings(supabase, scrydex, {
+        page:     Number(body.page     ?? 1),
+        pageSize: Number(body.pageSize ?? 25),
+        days:     Number(body.days     ?? 90),
+      });
+      await finishLog('success', (result as { listingCount: number }).listingCount);
 
     } else {
       return json({ error: `Unknown phase: ${phase}` }, 400);

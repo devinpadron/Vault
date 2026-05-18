@@ -1,17 +1,13 @@
-import { useState } from 'react';
 import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Card3D } from '@/components/cards/Card3D';
 import { SkeletonCardCell } from '@/components/ui/SkeletonCard';
-import { FilterPills } from '@/components/ui/FilterPills';
 import { Icon } from '@/components/ui/Icon';
-import { useCollectionCards } from '@/lib/db/collection';
+import { useWishlistCards } from '@/lib/db/wishlist';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
 import { Card, cardBaseName, cardNameVariant } from '@/types';
-
-const FILTERS = ['All', 'Foil', 'Set', 'Rarity', 'Value'];
 
 function fmt(n: number) {
   if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -24,11 +20,7 @@ function CardCell({ card, index }: { card: Card; index: number }) {
       entering={FadeInDown.delay(index * 20).duration(280)}
       style={styles.cellWrapper}
     >
-      <Card3D
-        card={card}
-        width={158}
-        onPress={() => router.push(`/card/${card.id}`)}
-      />
+      <Card3D card={card} width={158} onPress={() => router.push(`/card/${card.id}`)} />
       <View style={styles.cellMeta}>
         <Text style={styles.cardName} numberOfLines={1}>
           {cardBaseName(card.name)}
@@ -39,14 +31,7 @@ function CardCell({ card, index }: { card: Card; index: number }) {
         <Text style={styles.cardSet} numberOfLines={1}>{card.set}</Text>
         <View style={styles.priceRow}>
           {card.value > 0 ? (
-            <>
-              <Text style={styles.price}>${fmt(card.value)}</Text>
-              {card.trend30d != null && card.trend30d !== 0 && (
-                <Text style={[styles.trend, { color: card.trend30d > 0 ? Colors.up : Colors.down }]}>
-                  {card.trend30d > 0 ? '↑' : '↓'}{Math.abs(card.trend30d).toFixed(1)}%
-                </Text>
-              )}
-            </>
+            <Text style={styles.price}>${fmt(card.value)}</Text>
           ) : (
             <Text style={[styles.price, { color: Colors.text3 }]}>—</Text>
           )}
@@ -56,12 +41,9 @@ function CardCell({ card, index }: { card: Card; index: number }) {
   );
 }
 
-export default function CollectionScreen() {
-  const [filter, setFilter] = useState('All');
+export default function WishlistScreen() {
   const insets = useSafeAreaInsets();
-  const { data: allCards = [], isLoading } = useCollectionCards();
-
-  const cards = allCards.filter((c: Card) => filter === 'Foil' ? c.foil : true);
+  const { data: cards = [], isLoading } = useWishlistCards();
 
   const pairs: [Card, Card | null][] = [];
   for (let i = 0; i < cards.length; i += 2) {
@@ -75,57 +57,29 @@ export default function CollectionScreen() {
       style={styles.screen}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + 16, paddingBottom: 100 }]}
       showsVerticalScrollIndicator={false}
-      ListEmptyComponent={
-        !isLoading && cards.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>No cards yet</Text>
-            <Text style={styles.emptySubtitle}>
-              Search for cards and tap "Add to collection" to start building your vault.
-            </Text>
-          </View>
-        ) : null
-      }
       ListHeaderComponent={
         <>
           <View style={styles.header}>
             <View style={styles.headerText}>
               <Text style={styles.eyebrow}>
-                {isLoading ? 'Loading…' : `${cards.length} cards · ${new Set(cards.map(c => c.set)).size} sets`}
+                {isLoading ? 'Loading…' : `${cards.length} cards`}
               </Text>
               <Text style={styles.title}>
-                Your{' '}
-                <Text style={styles.titleAccent}>collection</Text>
+                The <Text style={styles.titleAccent}>wishlist</Text>
               </Text>
             </View>
-            <View style={styles.headerActions}>
-              <TouchableOpacity
-                style={styles.bindersBtn}
-                onPress={() => router.push('/wishlist')}
-                accessibilityLabel="Open wishlist"
-              >
-                <Icon name="heart" size={18} color={Colors.text} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.bindersBtn}
-                onPress={() => router.push('/(tabs)/binders')}
-                accessibilityLabel="Open binders"
-              >
-                <Icon name="binders" size={18} color={Colors.text} />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={styles.filterRow}>
-            <FilterPills options={FILTERS} value={filter} onChange={setFilter} />
-            <TouchableOpacity style={styles.sortBtn}>
-              <Icon name="sort" size={14} color={Colors.text} />
-              <Text style={styles.sortLabel}>Sort</Text>
+            <TouchableOpacity
+              style={styles.closeBtn}
+              onPress={() => router.back()}
+              accessibilityLabel="Close wishlist"
+            >
+              <Icon name="close" size={18} color={Colors.text} />
             </TouchableOpacity>
           </View>
 
           {isLoading && (
             <>
-              {Array.from({ length: 6 }, (_, i) => (
+              {Array.from({ length: 3 }, (_, i) => (
                 <View key={i} style={styles.row}>
                   <SkeletonCardCell width={158} />
                   <SkeletonCardCell width={158} />
@@ -134,6 +88,17 @@ export default function CollectionScreen() {
             </>
           )}
         </>
+      }
+      ListEmptyComponent={
+        !isLoading ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>Nothing wished for yet</Text>
+            <Text style={styles.emptySubtitle}>
+              Tap the heart on any card to save it here. The wishlist syncs to
+              your collection once you add the card for real.
+            </Text>
+          </View>
+        ) : null
       }
       renderItem={({ item: [left, right], index }) => (
         <View style={styles.row}>
@@ -161,17 +126,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    marginBottom: 22,
   },
   headerText: {
     flex: 1,
   },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 6,
-  },
-  bindersBtn: {
+  closeBtn: {
     width: 40,
     height: 40,
     borderRadius: 999,
@@ -180,6 +140,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.line,
     backgroundColor: 'rgba(255,255,255,0.04)',
+    marginBottom: 6,
   },
   eyebrow: {
     fontFamily: FontFamily.mono,
@@ -198,30 +159,6 @@ const styles = StyleSheet.create({
   titleAccent: {
     fontFamily: FontFamily.displayItalic,
     color: Colors.gold,
-  },
-  filterRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: -Spacing.xl,
-    marginBottom: 18,
-  },
-  sortBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    marginRight: Spacing.xl,
-    flexShrink: 0,
-  },
-  sortLabel: {
-    fontFamily: FontFamily.body,
-    fontSize: 12,
-    color: Colors.text,
   },
   emptyState: {
     alignItems: 'center',
@@ -282,13 +219,5 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     fontSize: 11,
     color: Colors.gold,
-  },
-  change: {
-    fontFamily: FontFamily.mono,
-    fontSize: 10,
-  },
-  trend: {
-    fontFamily: FontFamily.mono,
-    fontSize: 9,
   },
 });

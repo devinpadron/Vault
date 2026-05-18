@@ -25,6 +25,8 @@ const NAME_MAP: Record<string, keyof typeof Ionicons.glyphMap> = {
   trade:         'swap-horizontal',
   flash:         'flash-outline',
   binders:       'albums-outline',
+  settings:      'settings-outline',
+  logout:        'log-out-outline',
 };
 
 interface Props {

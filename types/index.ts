@@ -39,6 +39,25 @@ export interface VariantPrice {
   price: number | null;
 }
 
+export interface CardAttack {
+  name: string;
+  text: string | null;
+  damage: string | null;
+  cost: string[];                // energy-type strings ("Fire", "Colorless", …)
+  convertedEnergyCost: number;
+}
+
+export interface CardAbility {
+  name: string;
+  text: string;
+  type: string;                  // "Ability" | "Poké-Power" | "Poké-Body" | "VSTAR Power" | …
+}
+
+export interface CardWeakness {
+  type: string;                  // "Fire", "Water", …
+  value: string;                 // "×2", "-30"
+}
+
 export interface Card {
   // Identity
   id: string;
@@ -72,9 +91,17 @@ export interface Card {
   // Detail
   artist: string;
   hp?: number;
-  description?: string; // flavor text
+  description?: string;          // flavor text
   variants?: CardVariants;
   variantPrices?: VariantPrice[];
+
+  // Pokémon-card detail (populated only for supertype === 'Pokémon')
+  abilities?: CardAbility[];
+  attacks?: CardAttack[];
+  weaknesses?: CardWeakness[];
+  resistances?: CardWeakness[];
+  retreatCost?: string[];        // energy-type strings; length == colorless retreat
+  convertedRetreatCost?: number;
 }
 
 export interface Binder {

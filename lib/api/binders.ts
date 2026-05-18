@@ -12,6 +12,7 @@ const PLACEHOLDER_CARD: Card = {
   rarity: 'Common',
   value: 0,
   change: 0,
+  trend30d: null,
   foil: false,
   art: ['#1F0E3A', '#2D1B5E', '#1F0E3A'],
   creature: '○',

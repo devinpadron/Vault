@@ -35,6 +35,7 @@ export default function SearchScreen() {
 
   const {
     data,
+    error,
     isFetching,
     isFetchingNextPage,
     isError,
@@ -117,7 +118,7 @@ export default function SearchScreen() {
           }
         }}
       >
-        {isError && <ErrorPanel onRetry={refetch} />}
+        {isError && <ErrorPanel error={error} onRetry={refetch} />}
 
         {/* Results header */}
         <View style={styles.resultsHeader}>
@@ -144,6 +145,16 @@ export default function SearchScreen() {
         {isFetching && query.trim().length >= 2 && results.length === 0 && (
           <View style={styles.grid}>
             {[0, 1, 2].map(i => <SkeletonCard key={i} width={104} />)}
+          </View>
+        )}
+
+        {/* Empty state — query entered, no results, not fetching */}
+        {!isFetching && !isError && query.trim().length >= 2 && results.length === 0 && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No cards match</Text>
+            <Text style={styles.emptySubtitle}>
+              Try a different name, set, or filter.
+            </Text>
           </View>
         )}
 
@@ -432,5 +443,22 @@ const styles = StyleSheet.create({
   },
   loadingMore: {
     marginTop: 24,
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingTop: 60,
+    paddingHorizontal: 24,
+  },
+  emptyTitle: {
+    fontFamily: FontFamily.display,
+    fontSize: 22,
+    color: Colors.text3,
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontFamily: FontFamily.body,
+    fontSize: 13,
+    color: Colors.text3,
+    textAlign: 'center',
   },
 });

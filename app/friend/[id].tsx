@@ -12,18 +12,45 @@ export default function FriendProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
 
-  const { data: friend, isLoading, isError, refetch } = useFriend(id ?? '');
+  const { data: friend, isLoading, isError, error, refetch } = useFriend(id ?? '');
   const { data: binders = [] } = useFriendBinders(id ?? '');
 
-  if (isLoading) return null;
-  if (isError) {
+  if (isLoading) {
     return (
-      <View style={[styles.root, { alignItems: 'center', justifyContent: 'center' }]}>
-        <ErrorPanel message="Failed to load profile" onRetry={refetch} />
+      <View style={[styles.root, { paddingTop: insets.top + 8, paddingHorizontal: Spacing.lg }]}>
+        <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
+          <Icon name="chevron-left" size={18} color={Colors.text} />
+        </TouchableOpacity>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={styles.loadingText}>Loading profile…</Text>
+        </View>
       </View>
     );
   }
-  if (!friend) return null;
+  if (isError) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top + 8, paddingHorizontal: Spacing.lg }]}>
+        <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
+          <Icon name="chevron-left" size={18} color={Colors.text} />
+        </TouchableOpacity>
+        <View style={{ flex: 1, justifyContent: 'center' }}>
+          <ErrorPanel message="Failed to load profile" error={error} onRetry={refetch} />
+        </View>
+      </View>
+    );
+  }
+  if (!friend) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top + 8, paddingHorizontal: Spacing.lg }]}>
+        <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
+          <Icon name="chevron-left" size={18} color={Colors.text} />
+        </TouchableOpacity>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={styles.loadingText}>Profile not found</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.root}>
@@ -143,6 +170,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.line,
     backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  loadingText: {
+    fontFamily: FontFamily.body,
+    fontSize: 14,
+    color: Colors.text3,
   },
   // Hero
   hero: {

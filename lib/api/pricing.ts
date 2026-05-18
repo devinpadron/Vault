@@ -1,18 +1,37 @@
 import { supabase } from '@/lib/supabase';
 
+export interface PriceTrend {
+  change: number | null;        // absolute USD change
+  pct: number | null;           // percent change
+}
+
+export interface GradedOption {
+  variant: string;              // Scrydex variant name — 'holofoil', 'reverseHolofoil', …
+  grader: string;               // 'PSA' | 'CGC' | 'BGS' | 'TAG' | 'ACE'
+  grade: string;                // '10' | '9.5' | '9' | …
+  market: number | null;
+  label: string;                // e.g. 'PSA 10'
+}
+
 export interface CardPricing {
   price_usd: number | null;
   price_avg_7d: number | null;
   price_avg_30d: number | null;
   price_avg_90d: number | null;
-  price_change_7d: number | null;
-  price_change_30d: number | null;
-  price_change_90d: number | null;
+  // Scrydex ships trend columns for 7d/30d/90d; 1Y/ALL are computed from
+  // history first/last on the client.
+  pct_7d: number | null;
+  pct_30d: number | null;
+  pct_90d: number | null;
+  pct_1y: number | null;
+  pct_all: number | null;
   min_1y: number | null;
   max_1y: number | null;
   min_all_time: number | null;
   max_all_time: number | null;
-  price_history: number[];
+  price_history: number[];          // ascending chronological NM market values
+  price_history_dates: string[];    // matching ISO dates (YYYY-MM-DD)
+  graded_options: GradedOption[];   // available graded prices for this card
   not_found: boolean;
 }
 
@@ -21,25 +40,46 @@ const NULL_PRICING: CardPricing = {
   price_avg_7d: null,
   price_avg_30d: null,
   price_avg_90d: null,
-  price_change_7d: null,
-  price_change_30d: null,
-  price_change_90d: null,
+  pct_7d: null,
+  pct_30d: null,
+  pct_90d: null,
+  pct_1y: null,
+  pct_all: null,
   min_1y: null,
   max_1y: null,
   min_all_time: null,
   max_all_time: null,
   price_history: [],
+  price_history_dates: [],
+  graded_options: [],
   not_found: false,
 };
 
-export async function getCardPricing(cardId: string, variantId?: string): Promise<CardPricing> {
+export interface PricingQuery {
+  type?: 'raw' | 'graded';
+  grader?: string;
+  grade?: string;
+}
+
+export async function getCardPricing(
+  cardId: string,
+  variantId?: string,
+  query: PricingQuery = {},
+): Promise<CardPricing> {
+  const type = query.type ?? 'raw';
+
+  // Graded path lives in card_listings — Scrydex doesn't expose grader/grade
+  // through the prices include, only through /cards/{id}/listings. Hand off.
+  if (type === 'graded') {
+    return getGradedPricing(cardId, query.grader ?? 'PSA', query.grade ?? '10');
+  }
+
+  // ── Resolve variant (raw path only) ────────────────────────────────────────
   let resolvedVariantId: string;
 
   if (variantId) {
-    // Specific variant requested by the UI selector — use it directly.
     resolvedVariantId = variantId;
   } else {
-    // No variant specified: find the first variant of this card with an NM raw price.
     const { data: variants, error: variantErr } = await supabase
       .from('card_variants')
       .select('id')
@@ -57,68 +97,198 @@ export async function getCardPricing(cardId: string, variantId?: string): Promis
       .limit(1)
       .maybeSingle();
 
-    if (!firstPrice) return NULL_PRICING;
+    if (!firstPrice) return { ...NULL_PRICING, graded_options: await listGradedOptions(cardId) };
     resolvedVariantId = (firstPrice as { variant_id: string }).variant_id;
   }
 
-  // Current price for the resolved variant
+  // ── Current price ──────────────────────────────────────────────────────────
   const { data: prices } = await supabase
     .from('card_prices_current')
-    .select('market, low, high, trend_7d_change, trend_30d_change, trend_90d_change, trend_7d_pct, trend_30d_pct, trend_90d_pct')
+    .select('market, trend_7d_pct, trend_30d_pct, trend_90d_pct')
     .eq('variant_id', resolvedVariantId)
     .eq('type', 'raw')
     .eq('condition', 'NM')
     .maybeSingle();
 
-  if (!prices) return NULL_PRICING;
+  if (!prices) return { ...NULL_PRICING, graded_options: await listGradedOptions(cardId) };
 
   const p = prices as {
     market: number | null;
-    low: number | null;
-    high: number | null;
-    trend_7d_change: number | null;
-    trend_30d_change: number | null;
-    trend_90d_change: number | null;
     trend_7d_pct: number | null;
     trend_30d_pct: number | null;
     trend_90d_pct: number | null;
   };
 
-  // Price history — 1 row per day for this specific variant
+  // ── Price history (all stored snapshots) ──────────────────────────────────
   const { data: history } = await supabase
     .from('card_price_history')
-    .select('market')
+    .select('market, snapshot_date')
     .eq('variant_id', resolvedVariantId)
     .eq('type', 'raw')
     .eq('condition', 'NM')
-    .order('snapshot_date', { ascending: true })
-    .limit(90);
+    .order('snapshot_date', { ascending: true });
 
-  const priceHistory = (history ?? [])
-    .map((h: { market: number | null }) => h.market)
-    .filter((m): m is number => m != null);
+  const validHistory = (history ?? [])
+    .filter((h: { market: number | null }) => h.market != null) as { market: number; snapshot_date: string }[];
 
-  // Derive min/max and rolling averages from available history.
-  // min/max_1y covers all stored history (up to 90 days).
-  // min/max_all_time mirrors that until we accumulate more than a year.
-  const minVal = priceHistory.length > 0 ? Math.min(...priceHistory) : null;
-  const maxVal = priceHistory.length > 0 ? Math.max(...priceHistory) : null;
+  const priceHistory = validHistory.map(h => h.market);
+  const priceHistoryDates = validHistory.map(h => h.snapshot_date);
+
+  // ── Derived stats ──────────────────────────────────────────────────────────
+  const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
+  const oneYearSlice = validHistory.filter(h => new Date(h.snapshot_date).getTime() >= oneYearAgo);
+  const min1y = oneYearSlice.length ? Math.min(...oneYearSlice.map(h => h.market)) : null;
+  const max1y = oneYearSlice.length ? Math.max(...oneYearSlice.map(h => h.market)) : null;
+  const minAll = priceHistory.length ? Math.min(...priceHistory) : null;
+  const maxAll = priceHistory.length ? Math.max(...priceHistory) : null;
+
+  // 1Y / ALL percent change computed from history first/last in the window —
+  // Scrydex only ships trend columns for 1/7/30/90 days.
+  const pctFromSlice = (slice: number[]): number | null => {
+    if (slice.length < 2) return null;
+    const first = slice[0];
+    if (first === 0) return null;
+    return ((slice[slice.length - 1] - first) / first) * 100;
+  };
 
   return {
-    price_usd:        p.market,
-    price_avg_7d:     rollingAvg(priceHistory, 7),
-    price_avg_30d:    rollingAvg(priceHistory, 30),
-    price_avg_90d:    rollingAvg(priceHistory, 90),
-    price_change_7d:  p.trend_7d_change,
-    price_change_30d: p.trend_30d_change,
-    price_change_90d: p.trend_90d_change,
-    min_1y:           minVal,
-    max_1y:           maxVal,
-    min_all_time:     minVal,
-    max_all_time:     maxVal,
-    price_history:    priceHistory,
-    not_found:        false,
+    price_usd:           p.market,
+    price_avg_7d:        rollingAvg(priceHistory, 7),
+    price_avg_30d:       rollingAvg(priceHistory, 30),
+    price_avg_90d:       rollingAvg(priceHistory, 90),
+    pct_7d:              p.trend_7d_pct,
+    pct_30d:             p.trend_30d_pct,
+    pct_90d:             p.trend_90d_pct,
+    pct_1y:              pctFromSlice(oneYearSlice.map(h => h.market)),
+    pct_all:             pctFromSlice(priceHistory),
+    min_1y:              min1y,
+    max_1y:              max1y,
+    min_all_time:        minAll,
+    max_all_time:        maxAll,
+    price_history:       priceHistory,
+    price_history_dates: priceHistoryDates,
+    graded_options:      await listGradedOptions(cardId),
+    not_found:           false,
   };
+}
+
+// List all (variant, company, grade) options that have at least one sold
+// listing for this card. Sourced from card_listings. Representative price =
+// most-recent sold price per (variant, company, grade) tuple. The caller
+// groups by variant for display so the user can see, e.g., Holofoil PSA 10
+// separately from Reverse Holo PSA 10.
+export async function listGradedOptions(cardId: string): Promise<GradedOption[]> {
+  const { data } = await supabase
+    .from('card_listings')
+    .select('id, variant, company, grade, price, sold_at')
+    .eq('card_id', cardId)
+    .not('variant', 'is', null)
+    .not('company', 'is', null)
+    .not('grade', 'is', null)
+    .order('sold_at', { ascending: false })
+    .limit(500);
+
+  if (!data || data.length === 0) return [];
+
+  type Row = {
+    id: string;
+    variant: string;
+    company: string;
+    grade: string;
+    price: number;
+    sold_at: string;
+  };
+  const byKey = new Map<string, GradedOption>();
+  for (const r of data as Row[]) {
+    const key = `${r.variant}|${r.company}|${r.grade}`;
+    if (byKey.has(key)) continue;       // rows are sold_at desc; first hit = latest
+    byKey.set(key, {
+      variant: r.variant,
+      grader:  r.company,
+      grade:   r.grade,
+      market:  r.price,
+      label:   `${r.company} ${r.grade}`,
+    });
+  }
+
+  // Sort: variant first (stable grouping), then PSA-first grader order, then grade desc.
+  const graderOrder: Record<string, number> = { PSA: 0, CGC: 1, BGS: 2, TAG: 3, ACE: 4 };
+  return Array.from(byKey.values()).sort((a, b) => {
+    if (a.variant !== b.variant) return a.variant.localeCompare(b.variant);
+    const orderA = graderOrder[a.grader] ?? 99;
+    const orderB = graderOrder[b.grader] ?? 99;
+    if (orderA !== orderB) return orderA - orderB;
+    return parseFloat(b.grade) - parseFloat(a.grade);
+  });
+}
+
+// Build a CardPricing for a single graded tuple by aggregating the sold-listing
+// time series for that (company, grade) on this card. Each sold listing is one
+// data point — sparser than raw price history but real market data.
+async function getGradedPricing(
+  cardId: string,
+  grader: string,
+  grade: string,
+): Promise<CardPricing> {
+  const { data } = await supabase
+    .from('card_listings')
+    .select('price, sold_at')
+    .eq('card_id', cardId)
+    .eq('company', grader)
+    .eq('grade', grade)
+    .order('sold_at', { ascending: true });
+
+  type Row = { price: number; sold_at: string };
+  const rows = ((data ?? []) as Row[]).filter(r => r.price != null && r.sold_at);
+
+  if (rows.length === 0) {
+    return { ...NULL_PRICING, graded_options: await listGradedOptions(cardId) };
+  }
+
+  const prices = rows.map(r => r.price);
+  const dates = rows.map(r => r.sold_at);
+
+  const last = prices[prices.length - 1];
+  const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
+  const oneYearSlice = rows.filter(r => new Date(r.sold_at).getTime() >= oneYearAgo);
+
+  const pctFromSlice = (slice: number[]): number | null => {
+    if (slice.length < 2) return null;
+    const first = slice[0];
+    if (first === 0) return null;
+    return ((slice[slice.length - 1] - first) / first) * 100;
+  };
+
+  const sliceByDays = (days: number): number[] => {
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    return rows.filter(r => new Date(r.sold_at).getTime() >= cutoff).map(r => r.price);
+  };
+
+  return {
+    price_usd:           last,
+    price_avg_7d:        avg(sliceByDays(7)),
+    price_avg_30d:       avg(sliceByDays(30)),
+    price_avg_90d:       avg(sliceByDays(90)),
+    pct_7d:              pctFromSlice(sliceByDays(7)),
+    pct_30d:             pctFromSlice(sliceByDays(30)),
+    pct_90d:             pctFromSlice(sliceByDays(90)),
+    pct_1y:              pctFromSlice(oneYearSlice.map(r => r.price)),
+    pct_all:             pctFromSlice(prices),
+    min_1y:              oneYearSlice.length ? Math.min(...oneYearSlice.map(r => r.price)) : null,
+    max_1y:              oneYearSlice.length ? Math.max(...oneYearSlice.map(r => r.price)) : null,
+    min_all_time:        Math.min(...prices),
+    max_all_time:        Math.max(...prices),
+    price_history:       prices,
+    price_history_dates: dates,
+    graded_options:      await listGradedOptions(cardId),
+    not_found:           false,
+  };
+}
+
+function avg(slice: number[]): number | null {
+  if (slice.length === 0) return null;
+  const sum = slice.reduce((s, v) => s + v, 0);
+  return Math.round((sum / slice.length) * 100) / 100;
 }
 
 function rollingAvg(history: number[], days: number): number | null {
@@ -128,14 +298,18 @@ function rollingAvg(history: number[], days: number): number | null {
   return Math.round((sum / slice.length) * 100) / 100;
 }
 
+const RANGE_DAYS: Record<string, number> = {
+  '7D':  7,
+  '30D': 30,
+  '90D': 90,
+  '1Y':  365,
+  'ALL': Infinity,
+};
+
 export function sliceHistoryForRange(history: number[], range: string): number[] {
   if (history.length < 2) return [];
-  const sliceTo: Record<string, number> = {
-    '7D':  7,
-    '30D': 30,
-    '90D': history.length,
-  };
-  const n = Math.min(sliceTo[range] ?? history.length, history.length);
+  const days = RANGE_DAYS[range] ?? history.length;
+  const n = days === Infinity ? history.length : Math.min(days, history.length);
   return history.slice(-n);
 }
 
@@ -145,9 +319,11 @@ export function changForRange(
 ): { value: number | null; label: string } {
   if (!pricing) return { value: null, label: '' };
   const map: Record<string, { value: number | null; label: string }> = {
-    '7D':  { value: pricing.price_change_7d,  label: '7D' },
-    '30D': { value: pricing.price_change_30d, label: '30D' },
-    '90D': { value: pricing.price_change_90d, label: '90D' },
+    '7D':  { value: pricing.pct_7d,  label: '7D' },
+    '30D': { value: pricing.pct_30d, label: '30D' },
+    '90D': { value: pricing.pct_90d, label: '90D' },
+    '1Y':  { value: pricing.pct_1y,  label: '1Y' },
+    'ALL': { value: pricing.pct_all, label: 'ALL' },
   };
   return map[range] ?? { value: null, label: '' };
 }
@@ -161,6 +337,8 @@ export function avgForRange(
     '7D':  { value: pricing.price_avg_7d,  label: '7D AVG' },
     '30D': { value: pricing.price_avg_30d, label: '30D AVG' },
     '90D': { value: pricing.price_avg_90d, label: '90D AVG' },
+    '1Y':  { value: null, label: '' },
+    'ALL': { value: null, label: '' },
   };
   return map[range] ?? { value: null, label: '' };
 }

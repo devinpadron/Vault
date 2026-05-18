@@ -15,6 +15,11 @@
  *   --expansion Seed a single expansion by ID (skips the full catalog loop).
  *   --dry-run   Fetch from Scrydex but skip all Supabase writes.
  *   --verbose   Log each card as it is processed.
+ *   --detail    For each card, also fetch /cards/{id} to populate the full
+ *               payload (abilities, attacks, weaknesses, resistances, retreat
+ *               cost, flavor text, regulation mark, pokedex #s, level,
+ *               evolves_from, rules, ancient_trait, translation). One extra
+ *               API call per card — only use on a fresh seed. Default off.
  */
 
 import { createClient } from '@supabase/supabase-js';
@@ -30,6 +35,7 @@ const BASE             = 'https://api.scrydex.com/pokemon/v1';
 const args        = process.argv.slice(2);
 const DRY_RUN     = args.includes('--dry-run');
 const VERBOSE     = args.includes('--verbose');
+const FETCH_DETAIL = args.includes('--detail');
 const LANG_FILTER = argValue(args, '--language') ?? 'EN';
 const ONLY_EXP    = argValue(args, '--expansion');
 
@@ -98,6 +104,14 @@ async function* paginateExpansionCards(expansionId) {
   }
 }
 
+// Fetch the full /cards/{id} payload — needed when the list endpoint returns
+// the brief shape and we still want abilities/attacks/etc.
+async function fetchCardDetail(cardId) {
+  const resp = await scrydexGet(`/cards/${cardId}`, { casing: 'snake' });
+  // Single-resource endpoints sometimes wrap in { data: {...} }, sometimes not.
+  return resp?.data ?? resp;
+}
+
 // ─── Supabase upsert helpers ──────────────────────────────────────────────────
 
 async function upsertExpansion(exp) {
@@ -136,6 +150,7 @@ async function upsertCards(cards) {
     rarity_code:              c.rarity_code ?? null,
     artist:                   c.artist ?? null,
     expansion_sort_order:     c.expansion_sort_order ?? null,
+    language:                 c.language ?? null,
     language_code:            c.language_code ?? null,
     flavor_text:              c.flavor_text ?? null,
     national_pokedex_numbers: c.national_pokedex_numbers ?? null,
@@ -148,6 +163,11 @@ async function upsertCards(cards) {
     converted_retreat_cost:   c.converted_retreat_cost != null
       ? parseInt(c.converted_retreat_cost, 10) || null
       : null,
+    level:                    c.level ?? null,
+    evolves_from:             c.evolves_from ?? null,
+    rules:                    c.rules ?? null,
+    ancient_trait:            c.ancient_trait ?? null,
+    translation:              c.translation ?? null,
     raw_payload:              c,
     synced_at:                new Date().toISOString(),
   }));
@@ -188,36 +208,38 @@ async function upsertVariantsAndPrices(cards) {
     (upserted ?? []).map(v => [`${v.card_id}:${v.name}`, v.id]),
   );
 
+  // Skip `type='graded'` rows — the price include doesn't expose grader/grade.
+  // Graded data is sourced from card_listings via seed-listings.mjs.
   const now = new Date().toISOString();
   const priceRows = cardsWithVariants.flatMap(c =>
     c.variants.flatMap(v => {
       const variantId = variantIdMap.get(`${c.id}:${v.name}`);
       if (!variantId) return [];
-      return (v.prices ?? []).map(p => ({
-        variant_id:       variantId,
-        type:             p.type,
-        condition:        p.condition || '',
-        grader:           '',
-        grade:            '',
-        is_perfect:       p.is_perfect,
-        is_signed:        p.is_signed,
-        is_error:         p.is_error,
-        low:              p.low ?? null,
-        market:           p.market ?? null,
-        mid:              null,
-        high:             null,
-        currency:         p.currency ?? 'USD',
-        trend_1d_change:  p.trends?.days_1?.price_change ?? null,
-        trend_1d_pct:     p.trends?.days_1?.percent_change ?? null,
-        trend_7d_change:  p.trends?.days_7?.price_change ?? null,
-        trend_7d_pct:     p.trends?.days_7?.percent_change ?? null,
-        trend_30d_change: p.trends?.days_30?.price_change ?? null,
-        trend_30d_pct:    p.trends?.days_30?.percent_change ?? null,
-        trend_90d_change: p.trends?.days_90?.price_change ?? null,
-        trend_90d_pct:    p.trends?.days_90?.percent_change ?? null,
-        raw_payload:      p,
-        synced_at:        now,
-      }));
+      return (v.prices ?? [])
+        .filter(p => p.type !== 'graded')
+        .map(p => ({
+          variant_id:       variantId,
+          type:             p.type,
+          condition:        p.condition || '',
+          grader:           '',
+          grade:            '',
+          is_perfect:       p.is_perfect,
+          is_signed:        p.is_signed,
+          is_error:         p.is_error,
+          low:              p.low ?? null,
+          market:           p.market ?? null,
+          currency:         p.currency ?? 'USD',
+          trend_1d_change:  p.trends?.days_1?.price_change ?? null,
+          trend_1d_pct:     p.trends?.days_1?.percent_change ?? null,
+          trend_7d_change:  p.trends?.days_7?.price_change ?? null,
+          trend_7d_pct:     p.trends?.days_7?.percent_change ?? null,
+          trend_30d_change: p.trends?.days_30?.price_change ?? null,
+          trend_30d_pct:    p.trends?.days_30?.percent_change ?? null,
+          trend_90d_change: p.trends?.days_90?.price_change ?? null,
+          trend_90d_pct:    p.trends?.days_90?.percent_change ?? null,
+          raw_payload:      p,
+          synced_at:        now,
+        }));
     }),
   );
 
@@ -229,15 +251,52 @@ async function upsertVariantsAndPrices(cards) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
+// Merge the detail-endpoint response over the brief card. Brief fields stay
+// as the source of truth for things the detail doesn't include (variants/prices);
+// detail wins for ability/attack/etc.
+function mergeDetail(brief, detail) {
+  if (!detail) return brief;
+  return {
+    ...brief,
+    abilities:                detail.abilities                ?? brief.abilities,
+    attacks:                  detail.attacks                  ?? brief.attacks,
+    weaknesses:               detail.weaknesses               ?? brief.weaknesses,
+    resistances:              detail.resistances              ?? brief.resistances,
+    retreat_cost:             detail.retreat_cost             ?? brief.retreat_cost,
+    converted_retreat_cost:   detail.converted_retreat_cost   ?? brief.converted_retreat_cost,
+    flavor_text:              detail.flavor_text              ?? brief.flavor_text,
+    regulation_mark:          detail.regulation_mark          ?? brief.regulation_mark,
+    national_pokedex_numbers: detail.national_pokedex_numbers ?? brief.national_pokedex_numbers,
+    level:                    detail.level                    ?? brief.level,
+    evolves_from:             detail.evolves_from             ?? brief.evolves_from,
+    rules:                    detail.rules                    ?? brief.rules,
+    ancient_trait:            detail.ancient_trait            ?? brief.ancient_trait,
+    translation:              detail.translation              ?? brief.translation,
+    language:                 detail.language                 ?? brief.language,
+  };
+}
+
 async function seedExpansion(expansion) {
-  console.log(`\n  ▶ ${expansion.id}  "${expansion.name}"  (${expansion.language_code})`);
+  console.log(`\n  ▶ ${expansion.id}  "${expansion.name}"  (${expansion.language_code})${FETCH_DETAIL ? '  [+detail]' : ''}`);
   await upsertExpansion(expansion);
 
   const batch = [];
   let total   = 0;
 
   for await (const card of paginateExpansionCards(expansion.id)) {
-    batch.push(card);
+    let enriched = card;
+
+    if (FETCH_DETAIL) {
+      try {
+        const detail = await fetchCardDetail(card.id);
+        enriched = mergeDetail(card, detail);
+      } catch (err) {
+        if (VERBOSE) console.log(`    ↺ detail fetch failed for ${card.id}: ${err.message}`);
+      }
+      await delay(BATCH_DELAY);
+    }
+
+    batch.push(enriched);
     if (VERBOSE) process.stdout.write(`    ${card.id}\r`);
 
     if (batch.length >= 50) {

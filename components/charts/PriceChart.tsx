@@ -2,7 +2,7 @@ import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
 import Svg, { Polygon, Polyline, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { Colors, FontFamily } from '@/constants/theme';
 
-export const RANGES = ['7D', '30D', '90D'] as const;
+export const RANGES = ['7D', '30D', '90D', '1Y', 'ALL'] as const;
 export type Range = typeof RANGES[number];
 
 interface Props {

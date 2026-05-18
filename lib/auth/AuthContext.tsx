@@ -1,51 +1,110 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import type { Session } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabase';
+import { reconcileWithCloud } from '@/lib/db/cloud';
 import { User } from '@/types';
-import { saveAuth, loadAuth, clearAuth } from './storage';
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 
 interface AuthState {
   status: AuthStatus;
   user: User | null;
-  token: string | null;
+  session: Session | null;
 }
 
 interface AuthContextValue extends AuthState {
-  login: (token: string, user: User) => Promise<void>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+// Deterministic avatar gradient picker so the same user gets the same tones
+// every session, independent of any field that might change (display name).
+const AVATAR_PALETTE: [string, string][] = [
+  ['#FFD700', '#FF7A3A'],
+  ['#7A6BFF', '#5FD2FF'],
+  ['#9CFF6E', '#2EA15A'],
+  ['#FF7AE0', '#7B2AC9'],
+  ['#5FD2FF', '#FFB8E0'],
+];
+
+function avatarFor(id: string): [string, string] {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
+}
+
+// Map a Supabase auth user to our app-level User. user_metadata.full_name is
+// the standard OAuth claim; we fall back gracefully on each step.
+function sessionToUser(session: Session | null): User | null {
+  const supaUser = session?.user;
+  if (!supaUser) return null;
+
+  const md = (supaUser.user_metadata ?? {}) as Record<string, unknown>;
+  const fullName =
+    (md.full_name as string | undefined) ??
+    (md.name as string | undefined) ??
+    (supaUser.email ? supaUser.email.split('@')[0] : 'Trainer');
+  const handle = `@${(md.user_name as string | undefined) ?? fullName.split(' ')[0].toLowerCase()}`;
+
+  return {
+    id:     supaUser.id,
+    name:   fullName,
+    handle,
+    email:  supaUser.email ?? '',
+    avatar: avatarFor(supaUser.id),
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({
     status: 'loading',
     user: null,
-    token: null,
+    session: null,
   });
+  // Tracks which user IDs we've already reconciled with the cloud this app
+  // run, so the sync only fires once per sign-in (not on every TOKEN_REFRESHED).
+  const reconciledUsers = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    loadAuth().then(result => {
-      if (result) {
-        setState({ status: 'authenticated', user: result.user, token: result.token });
-      } else {
-        setState({ status: 'unauthenticated', user: null, token: null });
+    let mounted = true;
+
+    function applySession(session: Session | null) {
+      if (!mounted) return;
+      setState({
+        status: session ? 'authenticated' : 'unauthenticated',
+        user:   sessionToUser(session),
+        session,
+      });
+      const uid = session?.user.id;
+      if (uid && !reconciledUsers.current.has(uid)) {
+        reconciledUsers.current.add(uid);
+        // Local ↔ cloud reconcile in the background. Failures are logged inside.
+        reconcileWithCloud(uid).catch(err =>
+          console.warn('[auth] cloud reconcile failed:', err),
+        );
       }
+    }
+
+    supabase.auth.getSession().then(({ data }) => applySession(data.session));
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      applySession(session);
     });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
-  async function login(token: string, user: User): Promise<void> {
-    await saveAuth(token, user);
-    setState({ status: 'authenticated', user, token });
-  }
-
   async function logout(): Promise<void> {
-    await clearAuth();
-    setState({ status: 'unauthenticated', user: null, token: null });
+    await supabase.auth.signOut();
+    // onAuthStateChange handles state update.
   }
 
   return (
-    <AuthContext.Provider value={{ ...state, login, logout }}>
+    <AuthContext.Provider value={{ ...state, logout }}>
       {children}
     </AuthContext.Provider>
   );

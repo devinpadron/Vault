@@ -1,4 +1,11 @@
-import { CardType, Card as AppCard, VariantPrice } from '@/types';
+import {
+  CardType,
+  Card as AppCard,
+  VariantPrice,
+  CardAttack,
+  CardAbility,
+  CardWeakness,
+} from '@/types';
 
 export const TCGDEX_TYPE_MAP: Record<string, CardType> = {
   Fire: 'fire',
@@ -130,21 +137,42 @@ export interface SupabaseCardImage {
 export interface SupabaseCurrentPrice {
   market: number | null;
   low: number | null;
-  high: number | null;
   trend_7d_change: number | null;
   trend_7d_pct: number | null;
   trend_30d_change: number | null;
   trend_30d_pct: number | null;
   trend_90d_change: number | null;
   trend_90d_pct: number | null;
-  type: string;           // 'raw' | 'graded'
-  condition: string | null;
+  type: string;                  // 'raw' | 'graded'
+  condition: string | null;      // 'NM' | 'LP' | ... | '' for graded
+  grader: string | null;         // 'PSA' | 'CGC' | 'BGS' | … | '' for raw
+  grade: string | null;          // '10' | '9.5' | … | '' for raw
 }
 
 export interface SupabaseCardVariant {
   id: string;
   name: string;
   card_prices_current: SupabaseCurrentPrice[];
+}
+
+// Raw Scrydex shapes as stored in jsonb columns on cards. Mirrors ScrydexCardFull.
+export interface RawScrydexAttack {
+  cost?: string[];
+  converted_energy_cost?: number;
+  name: string;
+  text?: string | null;
+  damage?: string | null;
+}
+
+export interface RawScrydexAbility {
+  type: string;
+  name: string;
+  text: string;
+}
+
+export interface RawScrydexTypedValue {
+  type: string;
+  value: string;
 }
 
 export interface SupabaseCardFull {
@@ -162,6 +190,12 @@ export interface SupabaseCardFull {
   flavor_text: string | null;
   national_pokedex_numbers: number[] | null;
   regulation_mark: string | null;
+  abilities: RawScrydexAbility[] | null;
+  attacks: RawScrydexAttack[] | null;
+  weaknesses: RawScrydexTypedValue[] | null;
+  resistances: RawScrydexTypedValue[] | null;
+  retreat_cost: string[] | null;
+  converted_retreat_cost: number | string | null;
   expansions: SupabaseExpansion;
   card_images: SupabaseCardImage[];
   card_variants: SupabaseCardVariant[];
@@ -173,9 +207,11 @@ export const CARD_SELECT = [
   'rarity', 'rarity_code', 'artist',
   'number', 'printed_number', 'flavor_text',
   'national_pokedex_numbers', 'regulation_mark',
+  'abilities', 'attacks', 'weaknesses', 'resistances',
+  'retreat_cost', 'converted_retreat_cost',
   'expansions!expansion_id!inner(id, name, series, release_date)',
   'card_images(url, type, size)',
-  'card_variants(id, name, card_prices_current(market, low, high, trend_7d_change, trend_7d_pct, trend_30d_change, trend_30d_pct, trend_90d_change, trend_90d_pct, type, condition))',
+  'card_variants(id, name, card_prices_current(market, low, trend_7d_change, trend_7d_pct, trend_30d_change, trend_30d_pct, trend_90d_change, trend_90d_pct, type, condition, grader, grade))',
 ].join(', ');
 
 // Known variant overrides — covers the most common cases cleanly.
@@ -188,7 +224,7 @@ const KNOWN_VARIANTS: Record<string, string> = {
   firstEditionHolofoil: '1st Edition',
 };
 
-function formatVariantName(name: string): string {
+export function formatVariantName(name: string): string {
   if (KNOWN_VARIANTS[name]) return KNOWN_VARIANTS[name];
 
   // Convert camelCase → individual words
@@ -254,6 +290,38 @@ export function mapRow(row: SupabaseCardFull, index = 0): AppCard {
     firstEdition: variantNames.has('firstEdition'),
   };
 
+  // Map the rich Pokémon-card detail (jsonb fields) to clean app shapes.
+  const attacks: CardAttack[] | undefined = row.attacks?.length
+    ? row.attacks.map(a => ({
+        name:                a.name,
+        text:                a.text ?? null,
+        damage:              a.damage ?? null,
+        cost:                a.cost ?? [],
+        convertedEnergyCost: a.converted_energy_cost ?? (a.cost?.length ?? 0),
+      }))
+    : undefined;
+
+  const abilities: CardAbility[] | undefined = row.abilities?.length
+    ? row.abilities.map(a => ({ name: a.name, text: a.text, type: a.type }))
+    : undefined;
+
+  const weaknesses: CardWeakness[] | undefined = row.weaknesses?.length
+    ? row.weaknesses.map(w => ({ type: w.type, value: w.value }))
+    : undefined;
+
+  const resistances: CardWeakness[] | undefined = row.resistances?.length
+    ? row.resistances.map(r => ({ type: r.type, value: r.value }))
+    : undefined;
+
+  const retreatCost = row.retreat_cost?.length ? row.retreat_cost : undefined;
+  const rawCrc = row.converted_retreat_cost;
+  const convertedRetreatCost =
+    typeof rawCrc === 'number'
+      ? rawCrc
+      : typeof rawCrc === 'string'
+        ? (parseInt(rawCrc, 10) || undefined)
+        : retreatCost?.length;
+
   return {
     id:                       row.id,
     name:                     row.name,
@@ -283,5 +351,11 @@ export function mapRow(row: SupabaseCardFull, index = 0): AppCard {
     description:              row.flavor_text ?? undefined,
     variants,
     variantPrices:            variantPrices.length > 0 ? variantPrices : undefined,
+    abilities,
+    attacks,
+    weaknesses,
+    resistances,
+    retreatCost,
+    convertedRetreatCost,
   };
 }

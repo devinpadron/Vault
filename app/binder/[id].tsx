@@ -12,6 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CardThumb } from '@/components/cards/CardThumb';
 import { Icon } from '@/components/ui/Icon';
+import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { useBinder, useBinderCards } from '@/lib/api/binders';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 import { Card } from '@/types';
@@ -34,9 +35,45 @@ export default function BinderOpenScreen() {
   const [activePage, setActivePage] = useState(0);
   const insets = useSafeAreaInsets();
 
-  const { data: binder } = useBinder(id ?? '');
+  const { data: binder, isLoading, isError, error, refetch } = useBinder(id ?? '');
   const { data: binderCards = [] } = useBinderCards(id ?? '');
-  if (!binder) return null;
+
+  if (isLoading) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top + 8, paddingHorizontal: Spacing.lg }]}>
+        <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
+          <Icon name="chevron-left" size={18} color={Colors.text} />
+        </TouchableOpacity>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={styles.loadingText}>Loading binder…</Text>
+        </View>
+      </View>
+    );
+  }
+  if (isError) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top + 8, paddingHorizontal: Spacing.lg }]}>
+        <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
+          <Icon name="chevron-left" size={18} color={Colors.text} />
+        </TouchableOpacity>
+        <View style={{ flex: 1, justifyContent: 'center' }}>
+          <ErrorPanel message="Couldn't load this binder" error={error} onRetry={refetch} />
+        </View>
+      </View>
+    );
+  }
+  if (!binder) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top + 8, paddingHorizontal: Spacing.lg }]}>
+        <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
+          <Icon name="chevron-left" size={18} color={Colors.text} />
+        </TouchableOpacity>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={styles.loadingText}>Binder not found</Text>
+        </View>
+      </View>
+    );
+  }
 
   const { width: screenWidth } = Dimensions.get('window');
   const thumbWidth = getThumbWidth(screenWidth);
@@ -178,6 +215,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.line,
     backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  loadingText: {
+    fontFamily: FontFamily.body,
+    fontSize: 14,
+    color: Colors.text3,
   },
   titleSection: {
     paddingHorizontal: Spacing.xl,

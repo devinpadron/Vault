@@ -1,5 +1,14 @@
 import { AppData } from '@/types';
 
+// Master switch for mock-backed surfaces. Set to false once a real backend
+// exists for that data type. Currently no Scrydex endpoint covers news or
+// friends — they remain mocked behind this flag while the rest of the app
+// runs on Supabase data.
+//
+// TODO: when supabase/migrations/005_app_collections.sql is wired up
+// (profiles + friendships tables), drop friends mocks and use real queries.
+export const MOCK_DATA_ENABLED = true;
+
 const fire: [string, string, string] = ['#FF7A3A', '#C0291A', '#3A0E0E'];
 const water: [string, string, string] = ['#5FD2FF', '#2A6BC9', '#0E1F3A'];
 const grass: [string, string, string] = ['#9CFF6E', '#2EA15A', '#0E2F1F'];
@@ -10,20 +19,22 @@ const metal: [string, string, string] = ['#D6D9E0', '#7A8090', '#1A1C24'];
 const dragon: [string, string, string] = ['#7A6BFF', '#3A1E9C', '#0E0A2E'];
 const fairy: [string, string, string] = ['#FFB8E0', '#C96AAF', '#3A1A2E'];
 
-const cards: AppData['cards'] = [
-  { id: 'c01', name: 'Emberwyrm',  variant: 'EX',    set: 'AETHER PRIME', no: '014/189', release: '2025-09-14', rarity: 'Holo Rare',  value: 4280.00, change: +124.50, foil: true,  art: fire,   creature: '🜂', types: ['fire'],   artist: 'M. Volkov' },
-  { id: 'c02', name: 'Voltlynx',   variant: '★',     set: 'STORMBOUND',   no: '041/198', release: '2024-11-02', rarity: 'Secret',      value: 1620.00, change: +18.20,  foil: true,  art: bolt,   creature: '⚡', types: ['bolt'],   artist: 'J. Hayashi' },
-  { id: 'c03', name: 'Aquadrake',  variant: 'V-MAX', set: 'TIDEBORN',     no: '007/212', release: '2025-03-20', rarity: 'Ultra Rare',  value: 980.00,  change: -12.40,  foil: true,  art: water,  creature: '≈', types: ['water'],  artist: 'L. Bouchard' },
-  { id: 'c04', name: 'Verdantis',  variant: 'GX',    set: 'AETHER PRIME', no: '022/189', release: '2025-09-14', rarity: 'Rare',        value: 240.00,  change: +4.10,   foil: false, art: grass,  creature: '✿', types: ['grass'],  artist: 'M. Volkov' },
-  { id: 'c05', name: 'Noxshade',   variant: 'EX',    set: 'OBSIDIAN',     no: '055/172', release: '2024-06-08', rarity: 'Holo Rare',   value: 2140.00, change: +84.00,  foil: true,  art: dark,   creature: '☾', types: ['dark'],   artist: 'A. Reyes' },
-  { id: 'c06', name: 'Chronoseer', variant: '★★',   set: 'TIMEWEAVE',    no: '003/120', release: '2024-12-01', rarity: 'Secret',      value: 5400.00, change: +210.00, foil: true,  art: psy,    creature: '◐', types: ['psy'],    artist: 'K. Lindqvist' },
-  { id: 'c07', name: 'Ferromorph', variant: 'V',     set: 'IRONHEART',    no: '088/220', release: '2024-04-19', rarity: 'Rare',        value: 380.00,  change: -8.10,   foil: false, art: metal,  creature: '◆', types: ['metal'],  artist: 'D. Park' },
-  { id: 'c08', name: 'Pyralisk',   variant: 'EX',    set: 'EMBERFALL',    no: '012/186', release: '2023-10-15', rarity: 'Holo Rare',   value: 1320.00, change: +32.80,  foil: true,  art: fire,   creature: '☼', types: ['fire'],   artist: 'M. Volkov' },
-  { id: 'c09', name: 'Mossfen',    variant: '—',     set: 'TIDEBORN',     no: '019/212', release: '2025-03-20', rarity: 'Common',      value: 12.00,   change: 0,       foil: false, art: grass,  creature: '✦', types: ['grass'],  artist: 'L. Bouchard' },
-  { id: 'c10', name: 'Glacira',    variant: 'V-MAX', set: 'STORMBOUND',   no: '008/198', release: '2024-11-02', rarity: 'Ultra Rare',  value: 760.00,  change: +14.40,  foil: true,  art: water,  creature: '❄', types: ['water'],  artist: 'J. Hayashi' },
-  { id: 'c11', name: 'Mirthrune',  variant: '—',     set: 'OBSIDIAN',     no: '110/172', release: '2024-06-08', rarity: 'Common',      value: 4.00,    change: 0,       foil: false, art: fairy,  creature: '✿', types: ['fairy'],  artist: 'A. Reyes' },
-  { id: 'c12', name: 'Drakorvex',  variant: 'EX ★',  set: 'AETHER PRIME', no: '189/189', release: '2025-09-14', rarity: 'Rainbow',     value: 9800.00, change: +480.00, foil: true,  art: dragon, creature: '✶', types: ['dragon'], artist: 'M. Volkov' },
-];
+// Loose typing on purpose — these are placeholder rows, not real Card values.
+// Consumers re-type them as needed; legacy fields like trend30d default to null.
+const cards = [
+  { id: 'c01', name: 'Emberwyrm',  variant: 'EX',    set: 'AETHER PRIME', no: '014/189', release: '2025-09-14', rarity: 'Holo Rare',  value: 4280.00, change: +124.50, trend30d: null, foil: true,  art: fire,   creature: '🜂', types: ['fire'],   artist: 'M. Volkov' },
+  { id: 'c02', name: 'Voltlynx',   variant: '★',     set: 'STORMBOUND',   no: '041/198', release: '2024-11-02', rarity: 'Secret',      value: 1620.00, change: +18.20,  trend30d: null, foil: true,  art: bolt,   creature: '⚡', types: ['bolt'],   artist: 'J. Hayashi' },
+  { id: 'c03', name: 'Aquadrake',  variant: 'V-MAX', set: 'TIDEBORN',     no: '007/212', release: '2025-03-20', rarity: 'Ultra Rare',  value: 980.00,  change: -12.40,  trend30d: null, foil: true,  art: water,  creature: '≈', types: ['water'],  artist: 'L. Bouchard' },
+  { id: 'c04', name: 'Verdantis',  variant: 'GX',    set: 'AETHER PRIME', no: '022/189', release: '2025-09-14', rarity: 'Rare',        value: 240.00,  change: +4.10,   trend30d: null, foil: false, art: grass,  creature: '✿', types: ['grass'],  artist: 'M. Volkov' },
+  { id: 'c05', name: 'Noxshade',   variant: 'EX',    set: 'OBSIDIAN',     no: '055/172', release: '2024-06-08', rarity: 'Holo Rare',   value: 2140.00, change: +84.00,  trend30d: null, foil: true,  art: dark,   creature: '☾', types: ['dark'],   artist: 'A. Reyes' },
+  { id: 'c06', name: 'Chronoseer', variant: '★★',   set: 'TIMEWEAVE',    no: '003/120', release: '2024-12-01', rarity: 'Secret',      value: 5400.00, change: +210.00, trend30d: null, foil: true,  art: psy,    creature: '◐', types: ['psy'],    artist: 'K. Lindqvist' },
+  { id: 'c07', name: 'Ferromorph', variant: 'V',     set: 'IRONHEART',    no: '088/220', release: '2024-04-19', rarity: 'Rare',        value: 380.00,  change: -8.10,   trend30d: null, foil: false, art: metal,  creature: '◆', types: ['metal'],  artist: 'D. Park' },
+  { id: 'c08', name: 'Pyralisk',   variant: 'EX',    set: 'EMBERFALL',    no: '012/186', release: '2023-10-15', rarity: 'Holo Rare',   value: 1320.00, change: +32.80,  trend30d: null, foil: true,  art: fire,   creature: '☼', types: ['fire'],   artist: 'M. Volkov' },
+  { id: 'c09', name: 'Mossfen',    variant: '—',     set: 'TIDEBORN',     no: '019/212', release: '2025-03-20', rarity: 'Common',      value: 12.00,   change: 0,       trend30d: null, foil: false, art: grass,  creature: '✦', types: ['grass'],  artist: 'L. Bouchard' },
+  { id: 'c10', name: 'Glacira',    variant: 'V-MAX', set: 'STORMBOUND',   no: '008/198', release: '2024-11-02', rarity: 'Ultra Rare',  value: 760.00,  change: +14.40,  trend30d: null, foil: true,  art: water,  creature: '❄', types: ['water'],  artist: 'J. Hayashi' },
+  { id: 'c11', name: 'Mirthrune',  variant: '—',     set: 'OBSIDIAN',     no: '110/172', release: '2024-06-08', rarity: 'Common',      value: 4.00,    change: 0,       trend30d: null, foil: false, art: fairy,  creature: '✿', types: ['fairy'],  artist: 'A. Reyes' },
+  { id: 'c12', name: 'Drakorvex',  variant: 'EX ★',  set: 'AETHER PRIME', no: '189/189', release: '2025-09-14', rarity: 'Rainbow',     value: 9800.00, change: +480.00, trend30d: null, foil: true,  art: dragon, creature: '✶', types: ['dragon'], artist: 'M. Volkov' },
+] as unknown as AppData['cards'];
 
 export const MOCK_DATA: AppData = {
   cards,

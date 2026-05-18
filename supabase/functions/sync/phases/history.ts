@@ -65,6 +65,8 @@ export async function syncHistory(
 
         for (const entry of entries) {
           for (const p of entry.prices) {
+            // Skip graded — no grader/grade available from this endpoint.
+            if (p.type === 'graded') continue;
             const variantId = variantIdMap.get(`${cardId}:${p.variant}`);
             if (!variantId) continue;
 

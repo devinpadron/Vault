@@ -74,6 +74,8 @@ export default function RootLayout() {
             <Stack.Screen name="search" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
             <Stack.Screen name="binder/[id]" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
             <Stack.Screen name="friend/[id]" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="wishlist" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="settings" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
           </Stack>
           <StatusBar style="light" />
         </GestureHandlerRootView>

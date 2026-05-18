@@ -57,6 +57,8 @@ export async function syncPrices(
       .map(v => [`${v.card_id}:${v.name}`, v.id]),
   );
 
+  // Skip `type='graded'` rows — see phases/metadata.ts for rationale. Graded
+  // data is sourced from card_listings.
   const now = new Date().toISOString();
   const priceRows = cards
     .filter((c: ScrydexCardBrief) => c.variants && c.variants.length > 0)
@@ -64,31 +66,31 @@ export async function syncPrices(
       (c.variants as ScrydexVariant[]).flatMap(v => {
         const variantId = variantIdMap.get(`${c.id}:${v.name}`);
         if (!variantId) return [];
-        return v.prices.map(p => ({
-          variant_id:       variantId,
-          type:             p.type,
-          condition:        p.condition || '',
-          grader:           '',
-          grade:            '',
-          is_perfect:       p.is_perfect,
-          is_signed:        p.is_signed,
-          is_error:         p.is_error,
-          low:              p.low ?? null,
-          market:           p.market ?? null,
-          mid:              null,
-          high:             null,
-          currency:         p.currency ?? 'USD',
-          trend_1d_change:  p.trends?.days_1?.price_change ?? null,
-          trend_1d_pct:     p.trends?.days_1?.percent_change ?? null,
-          trend_7d_change:  p.trends?.days_7?.price_change ?? null,
-          trend_7d_pct:     p.trends?.days_7?.percent_change ?? null,
-          trend_30d_change: p.trends?.days_30?.price_change ?? null,
-          trend_30d_pct:    p.trends?.days_30?.percent_change ?? null,
-          trend_90d_change: p.trends?.days_90?.price_change ?? null,
-          trend_90d_pct:    p.trends?.days_90?.percent_change ?? null,
-          raw_payload:      p,
-          synced_at:        now,
-        }));
+        return v.prices
+          .filter(p => p.type !== 'graded')
+          .map(p => ({
+            variant_id:       variantId,
+            type:             p.type,
+            condition:        p.condition || '',
+            grader:           '',
+            grade:            '',
+            is_perfect:       p.is_perfect,
+            is_signed:        p.is_signed,
+            is_error:         p.is_error,
+            low:              p.low ?? null,
+            market:           p.market ?? null,
+            currency:         p.currency ?? 'USD',
+            trend_1d_change:  p.trends?.days_1?.price_change ?? null,
+            trend_1d_pct:     p.trends?.days_1?.percent_change ?? null,
+            trend_7d_change:  p.trends?.days_7?.price_change ?? null,
+            trend_7d_pct:     p.trends?.days_7?.percent_change ?? null,
+            trend_30d_change: p.trends?.days_30?.price_change ?? null,
+            trend_30d_pct:    p.trends?.days_30?.percent_change ?? null,
+            trend_90d_change: p.trends?.days_90?.price_change ?? null,
+            trend_90d_pct:    p.trends?.days_90?.percent_change ?? null,
+            raw_payload:      p,
+            synced_at:        now,
+          }));
       }),
     );
 

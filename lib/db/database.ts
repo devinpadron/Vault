@@ -35,6 +35,16 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
         card_json TEXT NOT NULL,
         added_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS cache_cards (
+        card_id TEXT PRIMARY KEY,
+        card_json TEXT NOT NULL,
+        fetched_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS cache_pricing (
+        cache_key TEXT PRIMARY KEY,
+        pricing_json TEXT NOT NULL,
+        fetched_at INTEGER NOT NULL
+      );
     `);
     _db = db;
     return db;

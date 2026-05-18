@@ -7,13 +7,12 @@ import { Card3D } from '@/components/cards/Card3D';
 import { SkeletonCard } from '@/components/ui/SkeletonCard';
 import { Sparkline } from '@/components/charts/Sparkline';
 import { Icon } from '@/components/ui/Icon';
-import { useFeaturedCard, useCardPriceHistory } from '@/lib/api/cards';
+import { useFeaturedCard, usePortfolioHistory } from '@/lib/api/cards';
 import { useNews } from '@/lib/api/news';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useCollectionCards } from '@/lib/db/collection';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
-import { NewsItem } from '@/types';
-import { cardBaseName, cardNameVariant } from '@/types';
+import { NewsItem, cardBaseName, cardNameVariant } from '@/types';
 
 function fmt(n: number) {
   if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -23,7 +22,6 @@ function fmt(n: number) {
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { data: featured, isLoading: featuredLoading } = useFeaturedCard();
-  console.log('Featured card:', featured);
   const { data: news = [] } = useNews();
   const { user } = useAuth();
   const { data: collectionCards = [] } = useCollectionCards();
@@ -34,7 +32,7 @@ export default function HomeScreen() {
 
   const totalValueStr = totalValue.toFixed(2);
   const [valuePrimary, valueCents] = totalValueStr.split('.');
-  const { data: priceHistory = [] } = useCardPriceHistory('portfolio', '1M', totalValue || 1000);
+  const { data: priceHistory = [] } = usePortfolioHistory('30D');
 
   const now = new Date();
   const dateLabel = now
@@ -69,12 +67,12 @@ export default function HomeScreen() {
             <Icon name="search" size={18} color={Colors.text} />
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.iconBtnRelative}
-            accessibilityLabel="Notifications"
+            style={styles.iconBtn}
+            onPress={() => router.push('/settings')}
+            accessibilityLabel="Open settings"
             accessibilityRole="button"
           >
-            <Icon name="bell" size={18} color={Colors.text} />
-            <View style={styles.badge} />
+            <Icon name="settings" size={18} color={Colors.text} />
           </TouchableOpacity>
         </View>
       </Animated.View>

@@ -1,55 +1,71 @@
-import { useState, useEffect } from 'react';
-import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import * as Haptics from 'expo-haptics';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Card3D } from "@/components/cards/Card3D";
+import { Icon } from "@/components/ui/Icon";
+import { SkeletonCard } from "@/components/ui/SkeletonCard";
+import { Colors, FontFamily, Radius } from "@/constants/theme";
+import { useFeaturedCard } from "@/lib/api/cards";
+import { useAddToCollection } from "@/lib/db/collection";
+import { cardBaseName, cardNameVariant } from "@/types";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Haptics from "expo-haptics";
+import { router } from "expo-router";
+import { useEffect, useState } from "react";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withRepeat,
-  withTiming,
-  withSpring,
   Easing,
   cancelAnimation,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSpring,
+  withTiming,
   type SharedValue,
-} from 'react-native-reanimated';
-import { Card3D } from '@/components/cards/Card3D';
-import { Icon } from '@/components/ui/Icon';
-import { MOCK_DATA } from '@/data/mock';
-import { Colors, FontFamily, Radius } from '@/constants/theme';
-import { cardBaseName, cardNameVariant } from '@/types';
+} from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-type Phase = 'scanning' | 'identified';
+type Phase = "scanning" | "identified";
 
 /** Rapid multi-impact burst that mirrors the visual confetti pop. */
 async function playConfettiBurst() {
   await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-  await new Promise<void>(r => setTimeout(r, 55));
+  await new Promise<void>((r) => setTimeout(r, 55));
   await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  await new Promise<void>(r => setTimeout(r, 65));
+  await new Promise<void>((r) => setTimeout(r, 65));
   await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-  await new Promise<void>(r => setTimeout(r, 50));
+  await new Promise<void>((r) => setTimeout(r, 50));
   await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  await new Promise<void>(r => setTimeout(r, 70));
+  await new Promise<void>((r) => setTimeout(r, 70));
   await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 }
 
 const RETICLE_W = 240;
 const RETICLE_H = 336;
-const IDENTIFIED_CARD = MOCK_DATA.cards[0]; // Emberwyrm EX
 
 const PARTICLE_CONFIGS = Array.from({ length: 14 }, (_, i) => ({
   angle: (i / 14) * Math.PI * 2,
   distance: 70 + (i % 3) * 28,
   color: [
-    Colors.gold, '#FF7A3A', '#5FD2FF', '#9CFF6E', '#FF5FB6',
-    '#7A6BFF', '#FFB8E0', '#FF5C5C', '#4ADE80', '#FFE03A',
-    '#C9A700', '#2A6BC9', '#C06AAF', '#FF7AE0',
+    Colors.gold,
+    "#FF7A3A",
+    "#5FD2FF",
+    "#9CFF6E",
+    "#FF5FB6",
+    "#7A6BFF",
+    "#FFB8E0",
+    "#FF5C5C",
+    "#4ADE80",
+    "#FFE03A",
+    "#C9A700",
+    "#2A6BC9",
+    "#C06AAF",
+    "#FF7AE0",
   ][i],
 }));
 
 function Particle({
-  angle, distance, color, progress,
+  angle,
+  distance,
+  color,
+  progress,
 }: {
   angle: number;
   distance: number;
@@ -66,17 +82,37 @@ function Particle({
       ],
     };
   });
-  return <Animated.View style={[styles.particle, { backgroundColor: color }, style]} />;
+  return (
+    <Animated.View
+      style={[styles.particle, { backgroundColor: color }, style]}
+    />
+  );
 }
 
 function fmt(n: number) {
-  return n >= 1000 ? n.toLocaleString('en-US', { maximumFractionDigits: 0 }) : n.toFixed(2);
+  return n >= 1000
+    ? n.toLocaleString("en-US", { maximumFractionDigits: 0 })
+    : n.toFixed(2);
 }
 
 export default function ScannerScreen() {
   const insets = useSafeAreaInsets();
-  const [phase, setPhase] = useState<Phase>('scanning');
+  const [phase, setPhase] = useState<Phase>("scanning");
   const [scanCount, setScanCount] = useState(0);
+  const [permission, requestPermission] = useCameraPermissions();
+  // Until Scrydex image recognition is wired, the "identified" card is a
+  // random Featured from Supabase so navigation, collection adds, and pricing
+  // look-ups all work end-to-end against live data.
+  const { data: identifiedCard } = useFeaturedCard();
+  const addToCollection = useAddToCollection();
+
+  // Auto-request permission on first mount. If the user previously denied it,
+  // they can re-grant via the in-screen button below.
+  useEffect(() => {
+    if (permission && !permission.granted && permission.canAskAgain) {
+      requestPermission();
+    }
+  }, [permission, requestPermission]);
 
   const beamY = useSharedValue(0);
   const particleProgress = useSharedValue(0);
@@ -85,7 +121,7 @@ export default function ScannerScreen() {
 
   // Beam animation runs during scanning phase
   useEffect(() => {
-    if (phase === 'scanning') {
+    if (phase === "scanning") {
       beamY.value = 0;
       beamY.value = withRepeat(
         withTiming(RETICLE_H, { duration: 1800, easing: Easing.linear }),
@@ -95,17 +131,21 @@ export default function ScannerScreen() {
     } else {
       cancelAnimation(beamY);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
-  // Auto-transition to identified after 2.4s; re-runs on rescan
+  // Auto-transition to identified after 2.4s; re-runs on rescan.
+  // Suspended until the camera permission is actually granted — no point
+  // running the fake-scan animation if the user can't see the camera.
   useEffect(() => {
+    if (!permission?.granted) return;
+
     particleProgress.value = 0;
     cardY.value = 60;
     cardOpacity.value = 0;
 
     const t = setTimeout(() => {
-      setPhase('identified');
+      setPhase("identified");
       playConfettiBurst();
       particleProgress.value = withTiming(1, {
         duration: 700,
@@ -115,8 +155,8 @@ export default function ScannerScreen() {
       cardOpacity.value = withTiming(1, { duration: 500 });
     }, 2400);
     return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scanCount]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanCount, permission?.granted]);
 
   const beamStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: beamY.value }],
@@ -129,12 +169,61 @@ export default function ScannerScreen() {
 
   const handleRescan = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setPhase('scanning');
-    setScanCount(c => c + 1);
+    setPhase("scanning");
+    setScanCount((c) => c + 1);
   };
+
+  // Until we have camera permission, render only the permission state — no
+  // reticle, no fake scan animation, no result sheet.
+  if (!permission || !permission.granted) {
+    return (
+      <View style={styles.screen}>
+        <View style={[styles.topBar, { paddingTop: insets.top + 12 }]}>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => router.back()}
+            accessibilityLabel="Close scanner"
+            accessibilityRole="button"
+          >
+            <Icon name="close" size={18} color={Colors.text} />
+          </TouchableOpacity>
+          <View />
+        </View>
+        <View style={styles.permissionPrompt}>
+          <Text style={styles.permissionTitle}>Camera access needed</Text>
+          <Text style={styles.permissionBody}>
+            {permission?.canAskAgain === false
+              ? "Vault needs camera access to scan cards. Enable it in iOS Settings → Vault → Camera, then come back."
+              : "Vault uses the camera to frame the card you’re trying to scan. Scrydex image recognition isn’t connected yet — for now scanning still works as a quick way to add a Featured card."}
+          </Text>
+          {permission?.canAskAgain !== false ? (
+            <TouchableOpacity
+              style={styles.permissionBtn}
+              onPress={requestPermission}
+            >
+              <Text style={styles.permissionBtnText}>Allow camera</Text>
+            </TouchableOpacity>
+          ) : (
+            <Text style={styles.permissionDenied}>Permission denied</Text>
+          )}
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screen}>
+      {/* Camera layer — sits behind every other element. */}
+      <CameraView style={StyleSheet.absoluteFill} facing="back" />
+      {/* Dimming layer keeps the corner brackets readable against the live feed. */}
+      <View
+        style={[
+          StyleSheet.absoluteFill,
+          { backgroundColor: "rgba(0,0,0,0.45)" },
+        ]}
+        pointerEvents="none"
+      />
+
       {/* Top bar */}
       <View style={[styles.topBar, { paddingTop: insets.top + 12 }]}>
         <TouchableOpacity
@@ -147,7 +236,7 @@ export default function ScannerScreen() {
         </TouchableOpacity>
         <View style={styles.modeBadge}>
           <Text style={styles.modeBadgeText}>
-            {phase === 'scanning' ? 'SCAN MODE' : 'IDENTIFIED'}
+            {phase === "scanning" ? "SCAN MODE" : "IDENTIFIED"}
           </Text>
         </View>
         <TouchableOpacity
@@ -161,16 +250,24 @@ export default function ScannerScreen() {
 
       {/* Center */}
       <View style={styles.center}>
-        {phase === 'scanning' ? (
+        {phase === "scanning" ? (
           <View style={styles.reticle}>
             {/* Corner brackets */}
             {[
-              { top: 0,    left: 0,  borderTopWidth: 2,    borderLeftWidth: 2  },
-              { top: 0,    right: 0, borderTopWidth: 2,    borderRightWidth: 2 },
-              { bottom: 0, left: 0,  borderBottomWidth: 2, borderLeftWidth: 2  },
-              { bottom: 0, right: 0, borderBottomWidth: 2, borderRightWidth: 2 },
+              { top: 0, left: 0, borderTopWidth: 2, borderLeftWidth: 2 },
+              { top: 0, right: 0, borderTopWidth: 2, borderRightWidth: 2 },
+              { bottom: 0, left: 0, borderBottomWidth: 2, borderLeftWidth: 2 },
+              {
+                bottom: 0,
+                right: 0,
+                borderBottomWidth: 2,
+                borderRightWidth: 2,
+              },
             ].map((pos, i) => (
-              <View key={i} style={[styles.corner, pos, { borderColor: Colors.gold }]} />
+              <View
+                key={i}
+                style={[styles.corner, pos, { borderColor: Colors.gold }]}
+              />
             ))}
             {/* Sweep beam */}
             <Animated.View style={[styles.beam, beamStyle]} />
@@ -185,42 +282,59 @@ export default function ScannerScreen() {
             </View>
             {/* Card materializes */}
             <Animated.View style={cardStyle}>
-              <Card3D
-                card={IDENTIFIED_CARD}
-                width={Math.round(RETICLE_W * 0.72)}
-                onPress={() => router.push(`/card/${IDENTIFIED_CARD.id}`)}
-              />
+              {identifiedCard ? (
+                <Card3D
+                  card={identifiedCard}
+                  width={Math.round(RETICLE_W * 0.72)}
+                  onPress={() => router.push(`/card/${identifiedCard.id}`)}
+                />
+              ) : (
+                <SkeletonCard width={Math.round(RETICLE_W * 0.72)} />
+              )}
             </Animated.View>
           </View>
         )}
       </View>
 
       {/* Bottom */}
-      {phase === 'scanning' ? (
-        <View style={[styles.scanBottom, { paddingBottom: insets.bottom + 24 }]}>
+      {phase === "scanning" ? (
+        <View
+          style={[styles.scanBottom, { paddingBottom: insets.bottom + 24 }]}
+        >
           <Text style={styles.analyzeLabel}>● ANALYZING</Text>
           <Text style={styles.hint}>Hold steady — frame the card</Text>
-          <Text style={styles.subLabel}>IMAGE HASH · SET LOOKUP · PRICE FETCH</Text>
+          <Text style={styles.subLabel}>
+            IMAGE HASH · SET LOOKUP · PRICE FETCH
+          </Text>
         </View>
       ) : (
         <Animated.View
-          entering={require('react-native-reanimated').FadeInUp.duration(350)}
+          entering={require("react-native-reanimated").FadeInUp.duration(350)}
           style={[styles.resultSheet, { paddingBottom: insets.bottom + 16 }]}
         >
           <View style={styles.resultGrabber} />
           <Text style={styles.confidence}>97.4% · MATCH</Text>
           <View style={styles.resultMeta}>
             <Text style={styles.resultName}>
-              {cardBaseName(IDENTIFIED_CARD.name)}
-              {cardNameVariant(IDENTIFIED_CARD.name) && (
-                <Text style={styles.resultVariant}> {cardNameVariant(IDENTIFIED_CARD.name)}</Text>
+              {identifiedCard ? cardBaseName(identifiedCard.name) : "—"}
+              {identifiedCard && cardNameVariant(identifiedCard.name) && (
+                <Text style={styles.resultVariant}>
+                  {" "}
+                  {cardNameVariant(identifiedCard.name)}
+                </Text>
               )}
             </Text>
             <Text style={styles.resultSet}>
-              {IDENTIFIED_CARD.set} · {IDENTIFIED_CARD.no}
+              {identifiedCard
+                ? `${identifiedCard.set} · ${identifiedCard.no}`
+                : ""}
             </Text>
           </View>
-          <Text style={styles.resultPrice}>${fmt(IDENTIFIED_CARD.value)}</Text>
+          <Text style={styles.resultPrice}>
+            {identifiedCard && identifiedCard.value > 0
+              ? `$${fmt(identifiedCard.value)}`
+              : "—"}
+          </Text>
           <View style={styles.resultCtaRow}>
             <TouchableOpacity
               style={styles.rescanBtn}
@@ -234,8 +348,12 @@ export default function ScannerScreen() {
               style={styles.addBtn}
               accessibilityLabel="Add card to collection"
               accessibilityRole="button"
-              onPress={() => {
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              onPress={async () => {
+                if (!identifiedCard) return;
+                await addToCollection(identifiedCard);
+                Haptics.notificationAsync(
+                  Haptics.NotificationFeedbackType.Success,
+                );
                 router.back();
               }}
             >
@@ -251,28 +369,28 @@ export default function ScannerScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#050507',
-    justifyContent: 'space-between',
+    backgroundColor: "#050507",
+    justifyContent: "space-between",
   },
   topBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 22,
   },
   iconBtn: {
     width: 36,
     height: 36,
     borderRadius: Radius.full,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   modeBadge: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: Radius.full,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: "rgba(255,255,255,0.1)",
   },
   modeBadgeText: {
     fontFamily: FontFamily.mono,
@@ -280,25 +398,68 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     color: Colors.text,
   },
+  // Camera permission prompt — flows after the top bar so the close button
+  // stays tappable. Center-aligned vertically within remaining space.
+  permissionPrompt: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+    gap: 12,
+    top: -60, // Visual tweak to better center text block with the top bar present
+  },
+  permissionTitle: {
+    fontFamily: FontFamily.display,
+    fontSize: 24,
+    color: Colors.text,
+    textAlign: "center",
+  },
+  permissionBody: {
+    fontFamily: FontFamily.body,
+    fontSize: 13,
+    color: Colors.text2,
+    textAlign: "center",
+    lineHeight: 19,
+    maxWidth: 320,
+  },
+  permissionBtn: {
+    marginTop: 4,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.gold,
+  },
+  permissionBtnText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 14,
+    color: "#0A0A0C",
+  },
+  permissionDenied: {
+    fontFamily: FontFamily.mono,
+    fontSize: 11,
+    color: Colors.text3,
+    textAlign: "center",
+    letterSpacing: 0.5,
+  },
   // Center
   center: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   // Scanning reticle
   reticle: {
     width: RETICLE_W,
     height: RETICLE_H,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   corner: {
-    position: 'absolute',
+    position: "absolute",
     width: 28,
     height: 28,
   },
   beam: {
-    position: 'absolute',
+    position: "absolute",
     left: 0,
     right: 0,
     top: 0,
@@ -312,23 +473,23 @@ const styles = StyleSheet.create({
   },
   // Identified
   identifiedCenter: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   particleHub: {
-    position: 'absolute',
-    alignItems: 'center',
-    justifyContent: 'center',
+    position: "absolute",
+    alignItems: "center",
+    justifyContent: "center",
   },
   particle: {
-    position: 'absolute',
+    position: "absolute",
     width: 8,
     height: 8,
     borderRadius: 4,
   },
   // Scan bottom
   scanBottom: {
-    alignItems: 'center',
+    alignItems: "center",
     paddingHorizontal: 22,
     paddingTop: 24,
   },
@@ -343,7 +504,7 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.display,
     fontSize: 22,
     color: Colors.text,
-    textAlign: 'center',
+    textAlign: "center",
   },
   subLabel: {
     fontFamily: FontFamily.mono,
@@ -351,7 +512,7 @@ const styles = StyleSheet.create({
     color: Colors.text3,
     marginTop: 8,
     letterSpacing: 1.2,
-    textAlign: 'center',
+    textAlign: "center",
   },
   // Result sheet
   resultSheet: {
@@ -367,14 +528,14 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 2,
     backgroundColor: Colors.line,
-    alignSelf: 'center',
+    alignSelf: "center",
     marginBottom: 14,
   },
   confidence: {
     fontFamily: FontFamily.mono,
     fontSize: 9,
     letterSpacing: 2,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
     color: Colors.up,
     marginBottom: 6,
   },
@@ -407,7 +568,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   resultCtaRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 10,
   },
   rescanBtn: {
@@ -416,9 +577,9 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "rgba(255,255,255,0.04)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   rescanText: {
     fontFamily: FontFamily.bodySemi,
@@ -430,12 +591,12 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     borderRadius: Radius.md,
     backgroundColor: Colors.gold,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   addBtnText: {
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
-    color: '#0A0A0C',
+    color: "#0A0A0C",
   },
 });

@@ -71,21 +71,30 @@ export interface ScrydexCardBrief {
   artist?: string;
   images: ScrydexImage[];
   expansion: ScrydexExpansion;
+  language?: string;
   language_code: string;
   expansion_sort_order: number;
   variants?: ScrydexVariant[];
 }
 
 export interface ScrydexCardFull extends ScrydexCardBrief {
+  // Vintage / metagame fields
+  level?: string;
+  evolves_from?: string[];
+  rules?: string[];
+  ancient_trait?: { name: string; text: string };
+  // Game mechanics
   abilities?: Array<{ type: string; name: string; text: string }>;
   attacks?: Array<{ cost: string[]; converted_energy_cost: number; name: string; text: string; damage: string }>;
   weaknesses?: Array<{ type: string; value: string }>;
   resistances?: Array<{ type: string; value: string }>;
   retreat_cost?: string[];
-  converted_retreat_cost?: string;
+  converted_retreat_cost?: string | number;
   flavor_text?: string;
   regulation_mark?: string;
   national_pokedex_numbers?: number[];
+  // Translation blob — populated for non-English cards
+  translation?: Record<string, unknown>;
 }
 
 export interface ScrydexPriceHistoryEntry {
@@ -101,9 +110,51 @@ export interface ScrydexPriceHistoryResponse {
   total_count: number;
 }
 
+export interface ScrydexListing {
+  id: string;
+  source: string;
+  card_id: string;
+  title: string;
+  variant: string;
+  company?: string;
+  grade?: string;
+  is_perfect: boolean;
+  is_error: boolean;
+  is_signed: boolean;
+  url: string;
+  price: number;
+  currency: string;
+  sold_at: string;        // "YYYY/MM/DD"
+}
+
+export interface ScrydexListingsResponse {
+  data: ScrydexListing[];
+  page: number;
+  page_size: number;
+  count: number;
+  total_count: number;
+}
+
+// ─── Observability ────────────────────────────────────────────────────────────
+
+// Captured from the last response so callers can write http_status / credits
+// to sync_log. Reset at the start of each phase by the caller.
+export interface ScrydexResponseMeta {
+  http_status: number | null;
+  credits_used: number | null;
+  rate_limit_remaining: number | null;
+}
+
 // ─── Client ───────────────────────────────────────────────────────────────────
 
 export class ScrydexClient {
+  // Most recent response metadata — overwritten on every request.
+  public lastMeta: ScrydexResponseMeta = {
+    http_status: null,
+    credits_used: null,
+    rate_limit_remaining: null,
+  };
+
   constructor(
     private readonly apiKey: string,
     private readonly teamId: string,
@@ -120,6 +171,14 @@ export class ScrydexClient {
         'Accept': 'application/json',
       },
     });
+
+    // Capture rate-limit + credit headers — Scrydex returns these on every response.
+    this.lastMeta = {
+      http_status: res.status,
+      credits_used: parseHeaderInt(res.headers.get('X-Credits-Used')) ??
+                    parseHeaderInt(res.headers.get('X-RateLimit-Used')),
+      rate_limit_remaining: parseHeaderInt(res.headers.get('X-RateLimit-Remaining')),
+    };
 
     if (!res.ok) {
       throw new Error(`Scrydex ${res.status} ${res.statusText}: ${path}`);
@@ -168,6 +227,12 @@ export class ScrydexClient {
     return this.get('/cards', params);
   }
 
+  // GET /cards/{id} — returns ScrydexCardFull. Use when the list endpoint's
+  // brief shape is missing abilities/attacks/etc.
+  async getCard(cardId: string): Promise<ScrydexCardFull> {
+    return this.get<ScrydexCardFull>(`/cards/${cardId}`, { casing: 'snake' });
+  }
+
   async getCardPriceHistory(
     cardId: string,
     days = 2,
@@ -177,4 +242,24 @@ export class ScrydexClient {
       casing: 'snake',
     });
   }
+
+  // GET /cards/{id}/listings — sold-listing snapshots from eBay et al.
+  async getCardListings(
+    cardId: string,
+    opts: { days?: number; page?: number; pageSize?: number } = {},
+  ): Promise<ScrydexListingsResponse> {
+    const params: Record<string, string> = {
+      casing: 'snake',
+      page:      String(opts.page     ?? 1),
+      page_size: String(opts.pageSize ?? 100),
+    };
+    if (opts.days) params.days = String(opts.days);
+    return this.get(`/cards/${cardId}/listings`, params);
+  }
+}
+
+function parseHeaderInt(v: string | null): number | null {
+  if (!v) return null;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : null;
 }
