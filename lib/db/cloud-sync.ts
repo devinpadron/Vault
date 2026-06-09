@@ -272,6 +272,15 @@ export async function deleteCollection(id: string): Promise<void> {
   await enqueue({ op_type: 'delete_collection', payload: { id } });
 }
 
+export async function renameCollection(id: string, name: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE cloud_collections SET name = ?, updated_at = ? WHERE id = ?`,
+    [name, Date.now(), id],
+  );
+  await enqueue({ op_type: 'rename_collection', payload: { id, name } });
+}
+
 /**
  * Add a card to a collection. Idempotent at the (collection_id, card_id)
  * level — if the card is already there nothing happens. Returns the

@@ -14,6 +14,7 @@ import {
   activeFilterCount, applyFilters,
 } from '@/lib/filters/collection';
 import { fmt } from '@/lib/format';
+import { useAuth } from '@/lib/auth/AuthContext';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
 import { Card, cardBaseName, cardNameVariant } from '@/types';
 
@@ -60,6 +61,7 @@ export default function CollectionScreen() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const insets = useSafeAreaInsets();
   const { data: entries = [], isLoading } = useCollectionEntries();
+  const { mirrorSync, retryMirrorSync } = useAuth();
 
   const visible = useMemo(() => applyFilters(entries, filters), [entries, filters]);
   const cards   = useMemo(() => visible.map(e => e.card), [visible]);
@@ -138,12 +140,33 @@ export default function CollectionScreen() {
               </View>
             </View>
 
+            {mirrorSync.state === 'error' && (
+              <View style={styles.syncBanner}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.syncBannerLabel}>SYNC FAILED</Text>
+                  <Text style={styles.syncBannerText}>
+                    Couldn&apos;t pull your collection from the cloud. Cards added on other devices may not show.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.syncBannerBtn}
+                  onPress={retryMirrorSync}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry sync"
+                >
+                  <Text style={styles.syncBannerBtnText}>RETRY</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             <View style={styles.filterRow}>
               <FilterTriggerButton count={activeCount} onPress={() => setSheetOpen(true)} />
             </View>
 
             {activeCount > 0 && (
-              <ActiveFilterChips filters={filters} onChange={setFilters} />
+              <View style={styles.chipsWrapper}>
+                <ActiveFilterChips filters={filters} onChange={setFilters} />
+              </View>
             )}
 
             {isLoading && (
@@ -232,8 +255,12 @@ const styles = StyleSheet.create({
   filterRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 18,
     marginTop: 14,
+  },
+  chipsWrapper: {
+    marginTop: -12,
+    marginBottom: 10,
   },
   emptyState: {
     alignItems: 'center',
@@ -308,5 +335,45 @@ const styles = StyleSheet.create({
   trend: {
     fontFamily: FontFamily.mono,
     fontSize: 9,
+  },
+  // Cloud-mirror sync failure banner — sits above the filter row when
+  // pullCollectionsFromCloud bombs out (offline, RLS error, etc.).
+  syncBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    marginTop: 10,
+    marginBottom: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,92,92,0.3)',
+    backgroundColor: 'rgba(255,92,92,0.08)',
+  },
+  syncBannerLabel: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 1.6,
+    color: Colors.down,
+    marginBottom: 4,
+  },
+  syncBannerText: {
+    fontFamily: FontFamily.body,
+    fontSize: 12,
+    color: Colors.text,
+    lineHeight: 16,
+  },
+  syncBannerBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,92,92,0.4)',
+  },
+  syncBannerBtnText: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    letterSpacing: 1.4,
+    color: Colors.down,
   },
 });

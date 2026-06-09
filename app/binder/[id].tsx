@@ -1,18 +1,33 @@
+import { useState } from 'react';
 import {
+  Alert,
   Dimensions,
-  ScrollView,
+  FlatList,
+  Modal,
+  Platform,
+  Share,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
+import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CardThumb } from '@/components/cards/CardThumb';
 import { Icon } from '@/components/ui/Icon';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
-import { useBinder, useBinderCards } from '@/lib/api/binders';
+import {
+  useBinder,
+  useBinderCards,
+  useDeleteBinder,
+  useRemoveCardFromBinder,
+  useRenameBinder,
+} from '@/lib/api/binders';
+import { useFriendBinder, useFriendBinderCards } from '@/lib/api/friends';
+import { useAuth } from '@/lib/auth/AuthContext';
 import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 import { Card } from '@/types';
 
@@ -21,6 +36,7 @@ const CONTAINER_PADDING = 14;
 const COL_GAP = 10;
 const SLEEVE_PADDING = 4;
 const NUM_COLS = 3;
+const PAGE_SIZE = 9;            // 3 × 3 grid per page
 
 function getThumbWidth(screenWidth: number) {
   const inner = screenWidth - CONTAINER_MARGIN * 2 - CONTAINER_PADDING * 2;
@@ -28,12 +44,52 @@ function getThumbWidth(screenWidth: number) {
   return Math.floor(sleeveWidth - SLEEVE_PADDING * 2);
 }
 
-export default function BinderOpenScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const insets = useSafeAreaInsets();
+// Split a card list into 9-card pages, padding the last page with nulls so
+// every page renders an identically-sized 3×3 grid. An empty binder still
+// gets one page so the user sees the empty sleeves.
+function paginate(cards: Card[]): (Card | null)[][] {
+  if (cards.length === 0) return [Array.from({ length: PAGE_SIZE }, () => null)];
+  const pages: (Card | null)[][] = [];
+  for (let i = 0; i < cards.length; i += PAGE_SIZE) {
+    const slice = cards.slice(i, i + PAGE_SIZE) as (Card | null)[];
+    while (slice.length < PAGE_SIZE) slice.push(null);
+    pages.push(slice);
+  }
+  return pages;
+}
 
-  const { data: binder, isLoading, isError, error, refetch } = useBinder(id ?? '');
-  const { data: binderCards = [] } = useBinderCards(id ?? '');
+export default function BinderOpenScreen() {
+  const { id, ownerId } = useLocalSearchParams<{ id: string; ownerId?: string }>();
+  const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+
+  // Two data sources sit behind this screen. Your own binders live in the
+  // local cloud-mirror (instant reads, write-through to Supabase). Friends'
+  // public binders live in Supabase under RLS — there's nothing to mirror.
+  const isOwn = !ownerId || ownerId === user?.id;
+
+  const ownQuery    = useBinder(isOwn ? (id ?? '') : '');
+  const friendQuery = useFriendBinder(!isOwn ? (id ?? '') : '');
+  const ownCardsQuery    = useBinderCards(isOwn ? (id ?? '') : '');
+  const friendCardsQuery = useFriendBinderCards(!isOwn ? (id ?? '') : '');
+
+  const binder      = isOwn ? ownQuery.data : friendQuery.data;
+  const isLoading   = isOwn ? ownQuery.isLoading : friendQuery.isLoading;
+  const isError     = isOwn ? ownQuery.isError : friendQuery.isError;
+  const error       = isOwn ? ownQuery.error : friendQuery.error;
+  const refetch     = isOwn ? ownQuery.refetch : friendQuery.refetch;
+  const binderCards = (isOwn ? ownCardsQuery.data : friendCardsQuery.data) ?? [];
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const [activePage, setActivePage] = useState(0);
+
+  // Mutations only fire for owned binders. They're safe to instantiate
+  // unconditionally — the screen just won't expose UI that calls them.
+  const removeCard = useRemoveCardFromBinder();
+  const renameBinder = useRenameBinder();
+  const deleteBinder = useDeleteBinder();
 
   if (isLoading) {
     return (
@@ -41,8 +97,8 @@ export default function BinderOpenScreen() {
         <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
           <Icon name="chevron-left" size={18} color={Colors.text} />
         </TouchableOpacity>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={styles.loadingText}>Loading binder…</Text>
+        <View style={styles.centerFill}>
+          <Text style={styles.muted}>Loading binder…</Text>
         </View>
       </View>
     );
@@ -65,113 +121,311 @@ export default function BinderOpenScreen() {
         <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
           <Icon name="chevron-left" size={18} color={Colors.text} />
         </TouchableOpacity>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={styles.loadingText}>Binder not found</Text>
+        <View style={styles.centerFill}>
+          <Text style={styles.muted}>Binder not found</Text>
         </View>
       </View>
     );
   }
 
+  // Alias for closures — TS doesn't narrow `binder` (Binder | null) into the
+  // handler functions defined below, even after the early-return null check.
+  const b = binder;
+
   const { width: screenWidth } = Dimensions.get('window');
   const thumbWidth = getThumbWidth(screenWidth);
+  const pages = paginate(binderCards);
+  const pageCount = pages.length;
+  // Page width matches the binder card width so paging snaps to each page.
+  const pageWidth = screenWidth;
 
-  const sleeveCards = binderCards.slice(0, 9);
-  const paddedCards: (Card | null)[] = [
-    ...sleeveCards,
-    ...Array(Math.max(0, 9 - sleeveCards.length)).fill(null),
-  ];
-  const rows = [paddedCards.slice(0, 3), paddedCards.slice(3, 6), paddedCards.slice(6, 9)];
+  function handleShare() {
+    // Include the owner so a friend's deep link round-trips to the friend
+    // view, not a "binder not found" on the recipient's local mirror.
+    const path = isOwn ? `/binder/${b.id}` : `/binder/${b.id}?ownerId=${ownerId}`;
+    const deepLink = Linking.createURL(path);
+    const possessive = isOwn ? 'my' : 'this';
+    const body = `Check out ${possessive} "${b.name}" binder on Vault — ${b.count} cards`;
+    Share.share(
+      Platform.OS === 'android'
+        ? { title: b.name, message: `${body}\n${deepLink}` }
+        : { message: body, url: deepLink },
+    ).catch(() => {});
+  }
+
+  function handleAdd() {
+    // Quickest path to "add cards to this binder" today is the global search,
+    // since the card-detail "Add to binder" sheet already lets the user pick
+    // any binder. A dedicated picker is a future improvement.
+    router.push('/search');
+  }
+
+  function openRename() {
+    setRenameValue(b.name);
+    setMenuOpen(false);
+    setRenameOpen(true);
+  }
+
+  async function commitRename() {
+    const next = renameValue.trim();
+    if (!next || next === b.name) {
+      setRenameOpen(false);
+      return;
+    }
+    try {
+      await renameBinder(b.id, next);
+      setRenameOpen(false);
+    } catch (e) {
+      Alert.alert('Rename failed', (e as Error).message);
+    }
+  }
+
+  function confirmDelete() {
+    setMenuOpen(false);
+    Alert.alert(
+      'Delete binder?',
+      `"${b.name}" and its ${b.count} cards will be removed from this binder. The cards themselves stay in your collection.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteBinder(b.id);
+              router.back();
+            } catch (e) {
+              Alert.alert('Delete failed', (e as Error).message);
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  function confirmRemoveCard(card: Card) {
+    Alert.alert(
+      'Remove from binder?',
+      `"${card.name}" will be removed from "${b.name}". Your collection isn't affected.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await removeCard(b.id, card.id);
+            } catch (e) {
+              Alert.alert('Remove failed', (e as Error).message);
+            }
+          },
+        },
+      ],
+    );
+  }
 
   return (
     <View style={styles.root}>
-      <ScrollView
-        style={styles.screen}
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Sticky nav header */}
-        <View style={[styles.navBar, { paddingTop: insets.top + 8 }]}>
-          <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
-            <Icon name="chevron-left" size={18} color={Colors.text} />
+      {/* Nav header */}
+      <View style={[styles.navBar, { paddingTop: insets.top + 8 }]}>
+        <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
+          <Icon name="chevron-left" size={18} color={Colors.text} />
+        </TouchableOpacity>
+        {isOwn ? (
+          <TouchableOpacity
+            style={styles.navBtn}
+            onPress={() => setMenuOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Binder options"
+          >
+            <Icon name="menu" size={18} color={Colors.text} />
           </TouchableOpacity>
+        ) : (
           <View style={styles.navBtn} />
-        </View>
+        )}
+      </View>
 
-        {/* Title */}
-        <View style={styles.titleSection}>
-          <Text style={styles.eyebrow}>{binder.subtitle || `${binder.count} CARDS`}</Text>
-          <Text style={styles.title}>{binder.name}</Text>
-        </View>
+      {/* Title */}
+      <View style={styles.titleSection}>
+        <Text style={styles.eyebrow}>
+          {binder.subtitle || `${binder.count} ${binder.count === 1 ? 'CARD' : 'CARDS'}`}
+          {pageCount > 1 ? ` · PAGE ${activePage + 1}/${pageCount}` : ''}
+        </Text>
+        <Text style={styles.title}>{binder.name}</Text>
+      </View>
 
-        {/* Sleeve grid */}
-        <View style={[styles.sleeveContainer, { marginHorizontal: CONTAINER_MARGIN }]}>
-          <LinearGradient
-            colors={binder.tone}
-            start={{ x: 0.15, y: 0 }}
-            end={{ x: 0.85, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-
-          {binderCards.length === 0 ? (
-            <View style={styles.emptyGrid}>
-              <Text style={styles.emptyTitle}>No cards yet</Text>
-              <Text style={styles.emptySubtitle}>Add cards to your collection</Text>
-            </View>
-          ) : (
-            <View style={styles.grid}>
-              {rows.map((row, rowIndex) => (
-                <View key={rowIndex} style={[styles.gridRow, rowIndex < rows.length - 1 && { marginBottom: COL_GAP }]}>
-                  {row.map((card, colIndex) => (
-                    <View key={colIndex} style={[styles.sleeve, { width: thumbWidth + SLEEVE_PADDING * 2 }]}>
-                      {card ? (
-                        <TouchableOpacity
-                          onPress={() => router.push(`/card/${card.id}`)}
-                          activeOpacity={0.85}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Open ${card.name}`}
-                        >
-                          <CardThumb card={card} width={thumbWidth} />
-                        </TouchableOpacity>
-                      ) : (
-                        <View style={{ width: thumbWidth, height: Math.floor(thumbWidth * 1.4), backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 4 }} />
-                      )}
-                      <LinearGradient
-                        colors={[
-                          'rgba(255,255,255,0.18)',
-                          'transparent',
-                          'transparent',
-                          'rgba(255,255,255,0.08)',
-                        ]}
-                        locations={[0, 0.3, 0.7, 1]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={[StyleSheet.absoluteFill, { borderRadius: Radius.sm }]}
-                        pointerEvents="none"
-                      />
+      {/* Horizontal pager — each page is a 3×3 grid inside the gradient sleeve */}
+      <FlatList
+        data={pages}
+        keyExtractor={(_, i) => `page-${i}`}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={e => {
+          const i = Math.round(e.nativeEvent.contentOffset.x / pageWidth);
+          setActivePage(Math.max(0, Math.min(pageCount - 1, i)));
+        }}
+        getItemLayout={(_, i) => ({ length: pageWidth, offset: pageWidth * i, index: i })}
+        renderItem={({ item: page }) => (
+          <View style={{ width: pageWidth }}>
+            <View style={[styles.sleeveContainer, { marginHorizontal: CONTAINER_MARGIN, marginBottom: 0 }]}>
+              <LinearGradient
+                colors={binder.tone}
+                start={{ x: 0.15, y: 0 }}
+                end={{ x: 0.85, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
+              {binderCards.length === 0 ? (
+                <View style={styles.emptyGrid}>
+                  <Text style={styles.emptyTitle}>No cards yet</Text>
+                  <Text style={styles.emptySubtitle}>Tap + to add cards</Text>
+                </View>
+              ) : (
+                <View style={styles.grid}>
+                  {[0, 1, 2].map(rowIdx => (
+                    <View
+                      key={rowIdx}
+                      style={[styles.gridRow, rowIdx < 2 && { marginBottom: COL_GAP }]}
+                    >
+                      {page.slice(rowIdx * NUM_COLS, rowIdx * NUM_COLS + NUM_COLS).map((card, colIdx) => (
+                        <View key={colIdx} style={[styles.sleeve, { width: thumbWidth + SLEEVE_PADDING * 2 }]}>
+                          {card ? (
+                            <TouchableOpacity
+                              onPress={() => router.push(`/card/${card.id}`)}
+                              onLongPress={isOwn ? () => confirmRemoveCard(card) : undefined}
+                              activeOpacity={0.85}
+                              accessibilityRole="button"
+                              accessibilityLabel={
+                                isOwn ? `${card.name}. Long-press to remove.` : card.name
+                              }
+                            >
+                              <CardThumb card={card} width={thumbWidth} />
+                            </TouchableOpacity>
+                          ) : (
+                            <View style={{
+                              width: thumbWidth,
+                              height: Math.floor(thumbWidth * 1.4),
+                              backgroundColor: 'rgba(0,0,0,0.25)',
+                              borderRadius: 4,
+                            }} />
+                          )}
+                          <LinearGradient
+                            colors={[
+                              'rgba(255,255,255,0.18)',
+                              'transparent',
+                              'transparent',
+                              'rgba(255,255,255,0.08)',
+                            ]}
+                            locations={[0, 0.3, 0.7, 1]}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                            style={[StyleSheet.absoluteFill, { borderRadius: Radius.sm }]}
+                            pointerEvents="none"
+                          />
+                        </View>
+                      ))}
                     </View>
                   ))}
                 </View>
-              ))}
+              )}
             </View>
-          )}
+          </View>
+        )}
+      />
 
+      {/* Pagination dots — only meaningful with >1 page */}
+      {pageCount > 1 && (
+        <View style={styles.dotsRow}>
+          {pages.map((_, i) => (
+            <View key={i} style={[styles.dot, i === activePage && styles.dotActive]} />
+          ))}
         </View>
-      </ScrollView>
+      )}
+
+      {/* Bottom CTAs */}
+      <View style={[styles.ctaRow, { paddingBottom: insets.bottom + 16 }]}>
+        <TouchableOpacity style={styles.ctaPrimary} onPress={handleShare} accessibilityLabel="Share binder">
+          <Icon name="share" size={15} color="#0A0A0C" />
+          <Text style={styles.ctaPrimaryText}>Share</Text>
+        </TouchableOpacity>
+        {isOwn && (
+          <TouchableOpacity style={styles.ctaIcon} onPress={handleAdd} accessibilityLabel="Add cards">
+            <Icon name="plus" size={16} color={Colors.text} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Menu sheet — Rename / Delete */}
+      <Modal
+        visible={menuOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuOpen(false)}
+        statusBarTranslucent
+      >
+        <TouchableOpacity
+          style={styles.backdrop}
+          activeOpacity={1}
+          onPress={() => setMenuOpen(false)}
+        />
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <View style={styles.sheetGrabber} />
+          <Text style={styles.sheetEyebrow}>BINDER OPTIONS</Text>
+          <Text style={styles.sheetTitle}>{binder.name}</Text>
+
+          <TouchableOpacity style={styles.menuRow} onPress={openRename}>
+            <Icon name="edit" size={18} color={Colors.text} />
+            <Text style={styles.menuLabel}>Rename binder</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={[styles.menuRow, styles.menuRowDanger]} onPress={confirmDelete}>
+            <Icon name="trash" size={18} color={Colors.down} />
+            <Text style={[styles.menuLabel, { color: Colors.down }]}>Delete binder</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
+      {/* Rename sheet — separate so it can use autoFocus + KAV */}
+      <Modal
+        visible={renameOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setRenameOpen(false)}
+        statusBarTranslucent
+      >
+        <TouchableOpacity
+          style={styles.backdrop}
+          activeOpacity={1}
+          onPress={() => setRenameOpen(false)}
+        />
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <View style={styles.sheetGrabber} />
+          <Text style={styles.sheetEyebrow}>RENAME</Text>
+          <Text style={styles.sheetTitle}>New binder name</Text>
+          <TextInput
+            style={styles.input}
+            value={renameValue}
+            onChangeText={setRenameValue}
+            placeholder="Binder name"
+            placeholderTextColor={Colors.text3}
+            autoFocus
+            returnKeyType="done"
+            onSubmitEditing={commitRename}
+            maxLength={48}
+          />
+          <TouchableOpacity style={styles.saveBtn} onPress={commitRename}>
+            <Text style={styles.saveBtnText}>Save</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: Colors.bg,
-  },
-  screen: {
-    flex: 1,
-  },
-  content: {
-    paddingHorizontal: 0,
-  },
+  root: { flex: 1, backgroundColor: Colors.bg },
+  centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  muted: { fontFamily: FontFamily.body, fontSize: 14, color: Colors.text3 },
   navBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -180,15 +434,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   navBtn: NavButtonStyle,
-  loadingText: {
-    fontFamily: FontFamily.body,
-    fontSize: 14,
-    color: Colors.text3,
-  },
-  titleSection: {
-    paddingHorizontal: Spacing.xl,
-    paddingBottom: 22,
-  },
+  titleSection: { paddingHorizontal: Spacing.xl, paddingBottom: 22 },
   eyebrow: {
     fontFamily: FontFamily.mono,
     fontSize: 10,
@@ -215,10 +461,7 @@ const styles = StyleSheet.create({
     shadowRadius: 24,
     elevation: 12,
   },
-  emptyGrid: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
+  emptyGrid: { alignItems: 'center', paddingVertical: 40 },
   emptyTitle: {
     fontFamily: FontFamily.display,
     fontSize: 18,
@@ -230,13 +473,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: 'rgba(255,255,255,0.4)',
   },
-  grid: {
-    flexDirection: 'column',
-  },
-  gridRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
+  grid: { flexDirection: 'column' },
+  gridRow: { flexDirection: 'row', justifyContent: 'space-between' },
   sleeve: {
     padding: SLEEVE_PADDING,
     borderRadius: Radius.sm,
@@ -244,5 +482,128 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
+  },
+  dotsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: 14,
+    marginBottom: 6,
+  },
+  dot: {
+    width: 5,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+  },
+  dotActive: {
+    width: 16,
+    backgroundColor: Colors.gold,
+  },
+  ctaRow: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: 18,
+  },
+  ctaPrimary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.gold,
+  },
+  ctaPrimaryText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 14,
+    color: '#0A0A0C',
+  },
+  ctaIcon: {
+    width: 50,
+    paddingVertical: 14,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Sheets
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
+  sheet: {
+    backgroundColor: Colors.elevated,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 22,
+    borderTopWidth: 1,
+    borderColor: Colors.line,
+  },
+  sheetGrabber: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.line,
+    alignSelf: 'center',
+    marginBottom: 18,
+  },
+  sheetEyebrow: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    letterSpacing: 1.6,
+    textTransform: 'uppercase',
+    color: Colors.text3,
+    marginBottom: 4,
+  },
+  sheetTitle: {
+    fontFamily: FontFamily.display,
+    fontSize: 24,
+    color: Colors.text,
+    marginBottom: 18,
+  },
+  menuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: Colors.surface,
+    marginBottom: 10,
+  },
+  menuRowDanger: {
+    borderColor: 'rgba(255,92,92,0.25)',
+  },
+  menuLabel: {
+    fontFamily: FontFamily.body,
+    fontSize: 15,
+    color: Colors.text,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: Colors.line,
+    borderRadius: Radius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    fontFamily: FontFamily.body,
+    fontSize: 15,
+    color: Colors.text,
+    backgroundColor: Colors.surface,
+    marginBottom: 14,
+  },
+  saveBtn: {
+    paddingVertical: 14,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.gold,
+    alignItems: 'center',
+  },
+  saveBtnText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 14,
+    color: '#0A0A0C',
   },
 });

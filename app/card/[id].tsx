@@ -2,7 +2,9 @@ import { useState, useEffect, useMemo } from 'react';
 import {
   Alert,
   Modal,
+  Platform,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -10,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
+import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
@@ -45,6 +48,19 @@ function fmtCompact(n: number): string {
 }
 
 const GRADER_ORDER: Record<string, number> = { PSA: 0, CGC: 1, BGS: 2, TAG: 3, ACE: 4 };
+
+// Share the card via the system share sheet. Deep link routes to the same
+// card detail when the recipient opens it on a device with Vault installed.
+function shareCard(card: Card, price: number | null) {
+  const deepLink = Linking.createURL(`/card/${card.id}`);
+  const priceTag = price != null && price > 0 ? ` — $${fmt(price)}` : '';
+  const body = `${card.name} · ${card.set} ${card.no}${priceTag} on Vault`;
+  Share.share(
+    Platform.OS === 'android'
+      ? { title: card.name, message: `${body}\n${deepLink}` }
+      : { message: body, url: deepLink },
+  ).catch(() => {});
+}
 
 function GradeMatrix({ options }: { options: GradedOption[] }) {
   // Pivot: rows = grades, columns = companies. Hide empty companies/grades.
@@ -420,6 +436,14 @@ export default function CardDetailScreen() {
               accessibilityLabel={isWishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
             >
               <Icon name="heart" size={18} color={isWishlisted ? Colors.gold : Colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.navBtn}
+              onPress={() => shareCard(card, price)}
+              accessibilityRole="button"
+              accessibilityLabel="Share this card"
+            >
+              <Icon name="share" size={18} color={Colors.text} />
             </TouchableOpacity>
           </View>
         </View>

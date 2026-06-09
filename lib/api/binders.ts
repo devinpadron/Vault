@@ -7,6 +7,9 @@ import { getDb } from '@/lib/db/database';
 import {
   addItemToCollection,
   createCollection,
+  deleteCollection,
+  removeItemFromCollectionByCard,
+  renameCollection,
 } from '@/lib/db/cloud-sync';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { PLACEHOLDER_CARD } from '@/lib/placeholder-card';
@@ -144,6 +147,41 @@ export function useAddCardToBinder() {
     queryClient.invalidateQueries({ queryKey: ['binder-cards', binderId] });
     queryClient.invalidateQueries({ queryKey: ['binder', user.id, binderId] });
     queryClient.invalidateQueries({ queryKey: ['binders', user.id] });
+  };
+}
+
+export function useRemoveCardFromBinder() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return async (binderId: string, cardId: string): Promise<void> => {
+    if (!user) throw new Error('Sign in to manage binders.');
+    await removeItemFromCollectionByCard(binderId, cardId);
+    queryClient.invalidateQueries({ queryKey: ['binder-cards', binderId] });
+    queryClient.invalidateQueries({ queryKey: ['binder', user.id, binderId] });
+    queryClient.invalidateQueries({ queryKey: ['binders', user.id] });
+  };
+}
+
+export function useRenameBinder() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return async (binderId: string, name: string): Promise<void> => {
+    if (!user) throw new Error('Sign in to manage binders.');
+    await renameCollection(binderId, name);
+    queryClient.invalidateQueries({ queryKey: ['binder', user.id, binderId] });
+    queryClient.invalidateQueries({ queryKey: ['binders', user.id] });
+  };
+}
+
+export function useDeleteBinder() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return async (binderId: string): Promise<void> => {
+    if (!user) throw new Error('Sign in to manage binders.');
+    await deleteCollection(binderId);
+    queryClient.invalidateQueries({ queryKey: ['binders', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['binder', user.id, binderId] });
+    queryClient.invalidateQueries({ queryKey: ['binder-cards', binderId] });
   };
 }
 

@@ -95,7 +95,7 @@ export interface PublicCollection {
   id: string;
   name: string;
   description: string | null;
-  kind: 'collection' | 'wishlist' | 'for_trade';
+  kind: 'collection' | 'wishlist' | 'binder' | 'for_trade';
   is_public: boolean;
   item_count: number;
 }

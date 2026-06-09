@@ -7,12 +7,24 @@ import { Icon } from '@/components/ui/Icon';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { useAuth } from '@/lib/auth/AuthContext';
 import {
+  PublicCollection,
   avatarFor,
   useMyProfile,
   useProfileCollections,
   useProfileStats,
 } from '@/lib/api/profiles';
 import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
+
+// Per-kind destination. for_trade has no dedicated screen yet — left null so
+// the row stays informational rather than navigating to a dead end.
+function destinationFor(c: PublicCollection): string | null {
+  switch (c.kind) {
+    case 'collection': return '/(tabs)/collection';
+    case 'wishlist':   return '/wishlist';
+    case 'binder':     return `/binder/${c.id}`;
+    case 'for_trade':  return null;
+  }
+}
 
 export default function MyProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -127,16 +139,32 @@ export default function MyProfileScreen() {
             <Text style={styles.muted}>No collections yet — add cards to get started.</Text>
           ) : (
             <View style={styles.list}>
-              {collections.map(c => (
-                <View key={c.id} style={styles.collectionRow}>
-                  <View style={styles.collectionInfo}>
-                    <Text style={styles.collectionName}>{c.name}</Text>
-                    <Text style={styles.collectionMeta}>
-                      {c.item_count} CARDS · {c.is_public ? 'PUBLIC' : 'PRIVATE'} · {c.kind.toUpperCase()}
-                    </Text>
-                  </View>
-                </View>
-              ))}
+              {collections.map(c => {
+                const dest = destinationFor(c);
+                const Row = dest ? TouchableOpacity : View;
+                return (
+                  <Row
+                    key={c.id}
+                    style={styles.collectionRow}
+                    {...(dest
+                      ? {
+                          onPress: () => router.push(dest as never),
+                          accessibilityRole: 'button' as const,
+                          accessibilityLabel: `Open ${c.name}`,
+                          activeOpacity: 0.85,
+                        }
+                      : {})}
+                  >
+                    <View style={styles.collectionInfo}>
+                      <Text style={styles.collectionName}>{c.name}</Text>
+                      <Text style={styles.collectionMeta}>
+                        {c.item_count} CARDS · {c.is_public ? 'PUBLIC' : 'PRIVATE'} · {c.kind.toUpperCase()}
+                      </Text>
+                    </View>
+                    {dest && <Icon name="chevron-right" size={14} color={Colors.text3} />}
+                  </Row>
+                );
+              })}
             </View>
           )}
         </View>

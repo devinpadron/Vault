@@ -123,7 +123,14 @@ export default function FriendProfileScreen() {
           ) : (
             <View style={styles.binderList}>
               {binders.map(binder => (
-                <View key={binder.id} style={styles.binderRow}>
+                <TouchableOpacity
+                  key={binder.id}
+                  style={styles.binderRow}
+                  onPress={() => router.push(`/binder/${binder.id}?ownerId=${friend.id}`)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${binder.name}`}
+                  activeOpacity={0.85}
+                >
                   <LinearGradient
                     colors={binder.tone}
                     start={{ x: 0.15, y: 0 }}
@@ -136,7 +143,8 @@ export default function FriendProfileScreen() {
                       {binder.count} {binder.count === 1 ? 'CARD' : 'CARDS'}
                     </Text>
                   </View>
-                </View>
+                  <Icon name="chevron-right" size={14} color={Colors.text3} />
+                </TouchableOpacity>
               ))}
             </View>
           )}

@@ -5,7 +5,8 @@ import { avatarFor } from '@/lib/avatar';
 import { toneFor } from '@/lib/binder-tones';
 import { PLACEHOLDER_CARD } from '@/lib/placeholder-card';
 import { Profile } from './profiles';
-import { Friend, Binder } from '@/types';
+import { CARD_SELECT, SupabaseCardFull, mapRow } from './types';
+import { Friend, Binder, Card } from '@/types';
 
 // All friends data is sourced from Supabase tables `profiles` and
 // `friendships` (RLS-protected). The historical `Friend` shape is preserved
@@ -20,10 +21,8 @@ function profileToFriend(p: Profile, binderCount: number): Friend {
     name:    p.display_name?.trim() || p.username,
     handle:  `@${p.username}`,
     avatar:  avatarFor(p.id),
-    value:   0,            // not yet computed — needs price join, deferred
     binders: binderCount,
-    online:  false,        // no presence system yet
-    recent:  '',           // shown on profile page, not in list rows
+    recent:  '',           // populated by useFriend's join — list rows leave blank
   };
 }
 
@@ -137,6 +136,66 @@ export function useFriendBinders(id: string) {
         cover:    PLACEHOLDER_CARD,
         tone:     toneFor(r.id),
       }));
+    },
+  });
+}
+
+// ─── Read-only friend binder view ─────────────────────────────────────────────
+// Used by app/binder/[id].tsx when an `ownerId` query param is present and
+// points at someone other than the current user. Reads come straight from
+// Supabase under RLS — the local mirror only ever holds the signed-in user's
+// rows, so there's nothing to mirror here.
+
+export function useFriendBinder(binderId: string) {
+  return useQuery<Binder | null>({
+    queryKey: ['friend-binder', binderId],
+    enabled: !!binderId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('collections')
+        .select('id, name, description, tone_start, tone_end, collection_items(count)')
+        .eq('id', binderId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return null;
+      const row = data as {
+        id: string;
+        name: string;
+        description: string | null;
+        tone_start: string | null;
+        tone_end: string | null;
+        collection_items: { count: number }[];
+      };
+      const tone: [string, string] = row.tone_start && row.tone_end
+        ? [row.tone_start, row.tone_end]
+        : toneFor(row.id);
+      return {
+        id:       row.id,
+        name:     row.name,
+        subtitle: row.description ?? '',
+        count:    row.collection_items[0]?.count ?? 0,
+        cover:    PLACEHOLDER_CARD,
+        tone,
+      };
+    },
+  });
+}
+
+export function useFriendBinderCards(binderId: string) {
+  return useQuery<Card[]>({
+    queryKey: ['friend-binder-cards', binderId],
+    enabled: !!binderId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('collection_items')
+        .select(`position, cards!card_id(${CARD_SELECT})`)
+        .eq('collection_id', binderId)
+        .order('position', { ascending: true });
+      if (error) throw error;
+      type Row = { position: number; cards: SupabaseCardFull | null };
+      return ((data ?? []) as unknown as Row[])
+        .filter(r => r.cards !== null)
+        .map((r, i) => mapRow(r.cards as SupabaseCardFull, i));
     },
   });
 }

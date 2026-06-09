@@ -6,6 +6,7 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth/AuthContext';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 
 // `vault://` is the scheme configured in app.json. We use a flat callback
@@ -14,8 +15,14 @@ import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 const REDIRECT_URL = Linking.createURL('auth-callback');
 if (__DEV__) console.log('[auth] OAuth redirect URL =', REDIRECT_URL);
 
+// TODO: replace with the real public URLs before App Store submission.
+// Apple's review specifically checks that the in-app legal links resolve.
+const TERMS_URL   = 'https://example.com/vault/terms';
+const PRIVACY_URL = 'https://example.com/vault/privacy';
+
 export default function WelcomeScreen() {
   const [busy, setBusy] = useState<'apple' | 'google' | null>(null);
+  const { signedOutReason, clearSignedOutReason } = useAuth();
 
   // ── Apple ────────────────────────────────────────────────────────────────
   async function signInWithApple() {
@@ -105,6 +112,22 @@ export default function WelcomeScreen() {
           <Text style={styles.tagline}>Your collection. Your vault.</Text>
         </View>
 
+        {signedOutReason === 'expired' && (
+          <View style={styles.expiredNotice}>
+            <Text style={styles.expiredText}>
+              Your session expired — sign in again to continue.
+            </Text>
+            <TouchableOpacity
+              onPress={clearSignedOutReason}
+              accessibilityLabel="Dismiss expiration notice"
+              accessibilityRole="button"
+              hitSlop={8}
+            >
+              <Text style={styles.expiredDismiss}>×</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         <View style={styles.actions}>
           {Platform.OS === 'ios' && (
             <TouchableOpacity
@@ -133,7 +156,24 @@ export default function WelcomeScreen() {
           </TouchableOpacity>
 
           <Text style={styles.legal}>
-            By continuing you agree to our Terms of Service and Privacy Policy.
+            By continuing you agree to our{' '}
+            <Text
+              style={styles.legalLink}
+              onPress={() => WebBrowser.openBrowserAsync(TERMS_URL).catch(() => {})}
+              accessibilityRole="link"
+              accessibilityLabel="Open Terms of Service"
+            >
+              Terms of Service
+            </Text>
+            {' '}and{' '}
+            <Text
+              style={styles.legalLink}
+              onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL).catch(() => {})}
+              accessibilityRole="link"
+              accessibilityLabel="Open Privacy Policy"
+            >
+              Privacy Policy
+            </Text>.
           </Text>
         </View>
       </View>
@@ -211,6 +251,32 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.text,
   },
+  expiredNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    width: '100%',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,215,0,0.3)',
+    backgroundColor: 'rgba(255,215,0,0.08)',
+    marginBottom: 20,
+  },
+  expiredText: {
+    flex: 1,
+    fontFamily: FontFamily.body,
+    fontSize: 13,
+    color: Colors.text,
+    lineHeight: 17,
+  },
+  expiredDismiss: {
+    fontFamily: FontFamily.display,
+    fontSize: 22,
+    color: Colors.text3,
+    paddingHorizontal: 6,
+  },
   legal: {
     fontFamily: FontFamily.body,
     fontSize: 11,
@@ -218,5 +284,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 16,
     marginTop: 4,
+  },
+  legalLink: {
+    color: Colors.text2,
+    textDecorationLine: 'underline',
   },
 });

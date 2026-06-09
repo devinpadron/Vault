@@ -60,7 +60,9 @@ export function NewsRow({ item, compact = false }: Props) {
           <Text style={styles.when}>{item.when}</Text>
         </View>
         <Text style={styles.title} numberOfLines={3}>{item.title}</Text>
-        <Text style={styles.minutes}>{item.minutes} MIN READ</Text>
+        {/* Read-time is an estimate from title+summary word count, not a real
+            field — the leading "~" signals that to the reader. */}
+        <Text style={styles.minutes}>~{item.minutes} MIN READ</Text>
       </View>
     </TouchableOpacity>
   );

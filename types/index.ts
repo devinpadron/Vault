@@ -118,10 +118,8 @@ export interface Friend {
   name: string;
   handle: string;
   avatar: [string, string];
-  value: number;
   binders: number;
-  online: boolean;
-  recent: string;
+  recent: string;     // most-recently-added card name; shown on the friend profile
 }
 
 export interface Listing {
