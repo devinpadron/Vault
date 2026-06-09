@@ -23,6 +23,7 @@ interface Props {
   width: number;
   large?: boolean;
   onPress?: () => void;
+  onLongPress?: () => void;
   sway?: boolean;
 }
 
@@ -53,7 +54,7 @@ function useNetworkImage(url?: string): SkImage | null {
   return image;
 }
 
-export function Card3D({ card, width, large = false, onPress, sway = false }: Props) {
+export function Card3D({ card, width, large = false, onPress, onLongPress, sway = false }: Props) {
   const height = width * 1.4;
   const cx = width / 2;
   const cy = height / 2;
@@ -177,8 +178,26 @@ export function Card3D({ card, width, large = false, onPress, sway = false }: Pr
       if (success && onPress) onPress();
     });
 
-  // Race: whichever activates first wins — quick lift = tap, drag = pan tilt
-  const gesture = onPress ? Gesture.Race(tap, pan) : pan;
+  const longPress = Gesture.LongPress()
+    .minDuration(380)
+    .runOnJS(true)
+    .onStart(() => {
+      if (onLongPress) onLongPress();
+    });
+
+  // Race: whichever activates first wins — quick lift = tap, hold = long-press,
+  // drag = pan tilt. Long-press wins over pan because its time threshold beats
+  // the pan's translation threshold on a still finger.
+  let gesture;
+  if (onPress && onLongPress) {
+    gesture = Gesture.Race(tap, longPress, pan);
+  } else if (onPress) {
+    gesture = Gesture.Race(tap, pan);
+  } else if (onLongPress) {
+    gesture = Gesture.Race(longPress, pan);
+  } else {
+    gesture = pan;
+  }
 
   return (
     <GestureDetector gesture={gesture}>

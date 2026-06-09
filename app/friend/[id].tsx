@@ -10,13 +10,14 @@ import { useAuth } from '@/lib/auth/AuthContext';
 import { useProfile } from '@/lib/api/profiles';
 import {
   useFriend,
-  useFriendBinders,
+  useFriendVisibleSurfaces,
   useFriendshipStatus,
   useIncomingFriendRequests,
   useRemoveFriend,
   useRespondToFriendRequest,
   useSendFriendRequest,
 } from '@/lib/api/friends';
+import { Binder } from '@/types';
 import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 
 export default function FriendProfileScreen() {
@@ -27,7 +28,10 @@ export default function FriendProfileScreen() {
 
   const { data: friend, isLoading, isError, error, refetch } = useFriend(id ?? '');
   const { data: profile } = useProfile(id ?? '');
-  const { data: binders = [] } = useFriendBinders(id ?? '');
+  const { data: surfaces } = useFriendVisibleSurfaces(id ?? '');
+  const main     = surfaces?.main     ?? null;
+  const wishlist = surfaces?.wishlist ?? null;
+  const binders  = surfaces?.binders  ?? [];
   const { data: status = 'none' } = useFriendshipStatus(id);
 
   // If this is the current user, bounce to /profile — the dedicated screen
@@ -115,41 +119,67 @@ export default function FriendProfileScreen() {
         <View style={styles.divider} />
 
         <View style={styles.bindersSection}>
-          <Text style={styles.sectionEyebrow}>Public binders</Text>
-          {binders.length === 0 ? (
+          {!main && !wishlist && binders.length === 0 ? (
             <Text style={styles.muted}>
-              No public collections yet.
+              Nothing shared publicly yet.
             </Text>
           ) : (
-            <View style={styles.binderList}>
-              {binders.map(binder => (
-                <TouchableOpacity
-                  key={binder.id}
-                  style={styles.binderRow}
-                  onPress={() => router.push(`/binder/${binder.id}?ownerId=${friend.id}`)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Open ${binder.name}`}
-                  activeOpacity={0.85}
-                >
-                  <LinearGradient
-                    colors={binder.tone}
-                    start={{ x: 0.15, y: 0 }}
-                    end={{ x: 0.85, y: 1 }}
-                    style={styles.binderThumb}
-                  />
-                  <View style={styles.binderInfo}>
-                    <Text style={styles.binderName}>{binder.name}</Text>
-                    <Text style={styles.binderMeta}>
-                      {binder.count} {binder.count === 1 ? 'CARD' : 'CARDS'}
-                    </Text>
-                  </View>
-                  <Icon name="chevron-right" size={14} color={Colors.text3} />
-                </TouchableOpacity>
-              ))}
-            </View>
+            <>
+              {main && (
+                <SurfaceSection title="Collection" ownerId={friend.id} rows={[main]} />
+              )}
+              {wishlist && (
+                <SurfaceSection title="Wishlist" ownerId={friend.id} rows={[wishlist]} />
+              )}
+              {binders.length > 0 && (
+                <SurfaceSection title="Binders" ownerId={friend.id} rows={binders} />
+              )}
+            </>
           )}
         </View>
       </ScrollView>
+    </View>
+  );
+}
+
+function SurfaceSection({
+  title,
+  ownerId,
+  rows,
+}: {
+  title: string;
+  ownerId: string;
+  rows: Binder[];
+}) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionEyebrow}>{title}</Text>
+      <View style={styles.binderList}>
+        {rows.map(binder => (
+          <TouchableOpacity
+            key={binder.id}
+            style={styles.binderRow}
+            onPress={() => router.push(`/binder/${binder.id}?ownerId=${ownerId}`)}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${binder.name}`}
+            activeOpacity={0.85}
+          >
+            <LinearGradient
+              colors={binder.tone}
+              start={{ x: 0.15, y: 0 }}
+              end={{ x: 0.85, y: 1 }}
+              style={styles.binderThumb}
+            />
+            <View style={styles.binderInfo}>
+              <Text style={styles.binderName}>{binder.name}</Text>
+              <Text style={styles.binderMeta}>
+                {binder.count} {binder.count === 1 ? 'CARD' : 'CARDS'}
+              </Text>
+            </View>
+            <Icon name="chevron-right" size={14} color={Colors.text3} />
+          </TouchableOpacity>
+        ))}
+      </View>
     </View>
   );
 }
@@ -345,6 +375,7 @@ const styles = StyleSheet.create({
   },
 
   bindersSection: { paddingHorizontal: Spacing.xl },
+  section: { marginBottom: 24 },
   sectionEyebrow: {
     fontFamily: FontFamily.mono,
     fontSize: 9,

@@ -54,18 +54,59 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
         ON cloud_collections (user_id, kind);
 
       CREATE TABLE IF NOT EXISTS cloud_collection_items (
-        id            TEXT PRIMARY KEY,
-        collection_id TEXT NOT NULL,
-        card_id       TEXT NOT NULL,
-        card_json     TEXT NOT NULL,         -- cached payload for fast renders
-        quantity      INTEGER NOT NULL DEFAULT 1,
-        position      INTEGER NOT NULL DEFAULT 0,
-        added_at      INTEGER NOT NULL
+        id              TEXT PRIMARY KEY,
+        collection_id   TEXT NOT NULL,
+        card_id         TEXT NOT NULL,
+        card_json       TEXT NOT NULL,         -- cached payload for fast renders
+        quantity        INTEGER NOT NULL DEFAULT 1,
+        position        INTEGER NOT NULL DEFAULT 0,
+        added_at        INTEGER NOT NULL,
+        acquired_price  REAL,                  -- USD; null = no cost basis set
+        acquired_at     INTEGER                -- epoch ms; null = unknown
       );
       CREATE INDEX IF NOT EXISTS cloud_collection_items_collection_idx
         ON cloud_collection_items (collection_id, position);
       CREATE INDEX IF NOT EXISTS cloud_collection_items_card_idx
         ON cloud_collection_items (card_id);
+
+      -- ── Grading queue (mirror of card_grading_submissions) ─────────────
+      CREATE TABLE IF NOT EXISTS cloud_card_grading (
+        id              TEXT PRIMARY KEY,
+        user_id         TEXT NOT NULL,
+        card_id         TEXT NOT NULL,
+        card_name       TEXT NOT NULL,
+        card_set        TEXT,
+        grader          TEXT NOT NULL,
+        submission_id   TEXT,
+        stage           TEXT NOT NULL DEFAULT 'received',
+        submitted_at    INTEGER NOT NULL,
+        returned_at     INTEGER,
+        returned_grade  TEXT,
+        declared_value  REAL,
+        notes           TEXT,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS cloud_card_grading_user_idx
+        ON cloud_card_grading (user_id, stage, submitted_at);
+
+      -- ── Realized sales ledger (mirror of card_sales) ───────────────────
+      CREATE TABLE IF NOT EXISTS cloud_card_sales (
+        id            TEXT PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        collection_id TEXT,
+        card_id       TEXT NOT NULL,
+        card_name     TEXT NOT NULL,
+        card_set      TEXT,
+        cost_basis    REAL,
+        sale_price    REAL NOT NULL,
+        currency      TEXT NOT NULL DEFAULT 'USD',
+        sold_at       INTEGER NOT NULL,
+        notes         TEXT,
+        created_at    INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS cloud_card_sales_user_idx
+        ON cloud_card_sales (user_id, sold_at);
 
       -- ── Offline mutation queue ─────────────────────────────────────────
       -- payload is a JSON blob whose shape depends on op_type; see cloud-sync.ts.
@@ -79,10 +120,36 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
         last_error      TEXT
       );
     `);
+    await migrateAddColumns(db);
     _db = db;
     return db;
   });
   return _init;
+}
+
+// SQLite has no ADD COLUMN IF NOT EXISTS — inspect the schema and add the
+// missing ones. Safe to call repeatedly. Add new column migrations here as
+// the mirror schema evolves.
+async function migrateAddColumns(db: SQLite.SQLiteDatabase): Promise<void> {
+  const itemCols = await db.getAllAsync<{ name: string }>(
+    `PRAGMA table_info(cloud_collection_items)`,
+  );
+  const itemNames = new Set(itemCols.map(c => c.name));
+  if (!itemNames.has('acquired_price')) {
+    await db.execAsync(`ALTER TABLE cloud_collection_items ADD COLUMN acquired_price REAL`);
+  }
+  if (!itemNames.has('acquired_at')) {
+    await db.execAsync(`ALTER TABLE cloud_collection_items ADD COLUMN acquired_at INTEGER`);
+  }
+
+  const collCols = await db.getAllAsync<{ name: string }>(
+    `PRAGMA table_info(cloud_collections)`,
+  );
+  const collNames = new Set(collCols.map(c => c.name));
+  if (!collNames.has('rules')) {
+    // Stored as JSON-encoded TEXT; null = manual binder.
+    await db.execAsync(`ALTER TABLE cloud_collections ADD COLUMN rules TEXT`);
+  }
 }
 
 // Called once per authenticated session by cloud-sync after the initial pull

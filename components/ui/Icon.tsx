@@ -25,6 +25,7 @@ const NAME_MAP: Record<string, keyof typeof Ionicons.glyphMap> = {
   star:          'star',
   check:         'checkmark',
   eye:           'eye-outline',
+  'eye-off':     'eye-off-outline',
   binders:       'albums-outline',
   settings:      'settings-outline',
   logout:        'log-out-outline',

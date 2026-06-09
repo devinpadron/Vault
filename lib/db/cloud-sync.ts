@@ -24,6 +24,17 @@ import { Card } from '@/types';
 
 export type CollectionKind = 'collection' | 'wishlist' | 'binder' | 'for_trade';
 
+export interface SmartBinderRules {
+  match:      'all' | 'any';
+  sets?:      string[];        // upper-cased set names
+  rarities?:  string[];
+  supertypes?:string[];        // 'Pokémon' | 'Trainer' | 'Energy'
+  variants?:  string[];        // 'EX' | 'V' | 'VMAX' …
+  minValue?:  number;
+  maxValue?:  number;
+  foilOnly?:  boolean;
+}
+
 export interface MirrorCollection {
   id: string;
   user_id: string;
@@ -33,6 +44,7 @@ export interface MirrorCollection {
   tone_start: string | null;
   tone_end: string | null;
   is_public: boolean;
+  rules: SmartBinderRules | null;
   created_at: number;
   updated_at: number;
 }
@@ -45,6 +57,44 @@ export interface MirrorItem {
   quantity: number;
   position: number;
   added_at: number;
+  acquired_price: number | null;  // USD, null = unknown
+  acquired_at: number | null;     // epoch ms, null = unknown
+}
+
+export type GradingStage =
+  | 'received' | 'research' | 'grading' | 'shipped_back' | 'completed';
+
+export interface MirrorGrading {
+  id:              string;
+  user_id:         string;
+  card_id:         string;
+  card_name:       string;
+  card_set:        string | null;
+  grader:          string;
+  submission_id:   string | null;
+  stage:           GradingStage;
+  submitted_at:    number;
+  returned_at:     number | null;
+  returned_grade:  string | null;
+  declared_value:  number | null;
+  notes:           string | null;
+  created_at:      number;
+  updated_at:      number;
+}
+
+export interface MirrorSale {
+  id: string;
+  user_id: string;
+  collection_id: string | null;
+  card_id: string;
+  card_name: string;
+  card_set: string | null;
+  cost_basis: number | null;
+  sale_price: number;
+  currency: string;
+  sold_at: number;
+  notes: string | null;
+  created_at: number;
 }
 
 // RFC4122 v4 UUID without pulling in expo-crypto. The harness collision
@@ -75,11 +125,24 @@ export async function pullCollectionsFromCloud(userId: string): Promise<void> {
   // 1. Fetch collections + items in two queries.
   const { data: collections, error: cErr } = await supabase
     .from('collections')
-    .select('id, user_id, kind, name, description, tone_start, tone_end, is_public, created_at, updated_at')
+    .select('id, user_id, kind, name, description, tone_start, tone_end, is_public, rules, created_at, updated_at')
     .eq('user_id', userId);
-  if (cErr) throw new Error(`pull collections: ${cErr.message}`);
+  // Tolerate older databases without the `rules` column — retry without it.
+  let collectionsData = collections;
+  if (cErr) {
+    if (/column .*rules.* does not exist|schema cache/i.test(cErr.message)) {
+      const retry = await supabase
+        .from('collections')
+        .select('id, user_id, kind, name, description, tone_start, tone_end, is_public, created_at, updated_at')
+        .eq('user_id', userId);
+      if (retry.error) throw new Error(`pull collections: ${retry.error.message}`);
+      collectionsData = retry.data as unknown as typeof collections;
+    } else {
+      throw new Error(`pull collections: ${cErr.message}`);
+    }
+  }
 
-  const collectionIds = (collections ?? []).map(c => (c as { id: string }).id);
+  const collectionIds = (collectionsData ?? []).map(c => (c as { id: string }).id);
 
   type ItemRow = {
     id: string;
@@ -88,6 +151,8 @@ export async function pullCollectionsFromCloud(userId: string): Promise<void> {
     quantity: number;
     position: number;
     created_at: string;
+    acquired_price: number | null;
+    acquired_at: string | null;
     cards: { id: string; name: string; rarity: string | null } | null;
   };
 
@@ -95,10 +160,54 @@ export async function pullCollectionsFromCloud(userId: string): Promise<void> {
   if (collectionIds.length > 0) {
     const { data, error: iErr } = await supabase
       .from('collection_items')
-      .select('id, collection_id, card_id, quantity, position, created_at')
+      .select('id, collection_id, card_id, quantity, position, created_at, acquired_price, acquired_at')
       .in('collection_id', collectionIds);
     if (iErr) throw new Error(`pull items: ${iErr.message}`);
     items = (data ?? []) as ItemRow[];
+  }
+
+  // Pull realized sales ledger.
+  type SaleRow = {
+    id: string;
+    user_id: string;
+    collection_id: string | null;
+    card_id: string;
+    card_name: string;
+    card_set: string | null;
+    cost_basis: number | null;
+    sale_price: number;
+    currency: string;
+    sold_at: string;
+    notes: string | null;
+    created_at: string;
+  };
+  const { data: salesData, error: sErr } = await supabase
+    .from('card_sales')
+    .select('id, user_id, collection_id, card_id, card_name, card_set, cost_basis, sale_price, currency, sold_at, notes, created_at')
+    .eq('user_id', userId);
+  if (sErr) throw new Error(`pull sales: ${sErr.message}`);
+  const sales: SaleRow[] = (salesData ?? []) as SaleRow[];
+
+  // Pull grading queue.
+  type GradingRow = {
+    id: string; user_id: string; card_id: string;
+    card_name: string; card_set: string | null;
+    grader: string; submission_id: string | null; stage: string;
+    submitted_at: string; returned_at: string | null;
+    returned_grade: string | null; declared_value: number | null;
+    notes: string | null; created_at: string; updated_at: string;
+  };
+  const { data: gradingData, error: gErr } = await supabase
+    .from('card_grading_submissions')
+    .select('id, user_id, card_id, card_name, card_set, grader, submission_id, stage, submitted_at, returned_at, returned_grade, declared_value, notes, created_at, updated_at')
+    .eq('user_id', userId);
+  // Don't fail the whole sync if the grading table doesn't exist yet — just
+  // proceed without grading data. Migration 015 fills it in.
+  const grading: GradingRow[] = gErr
+    ? []
+    : ((gradingData ?? []) as GradingRow[]);
+  if (gErr && !/relation "card_grading_submissions" does not exist|schema cache/i.test(gErr.message)) {
+    throw new Error(`pull grading: ${gErr.message}`);
   }
 
   // 2. Hydrate card_json for items by joining to the cache_cards mirror.
@@ -125,9 +234,9 @@ export async function pullCollectionsFromCloud(userId: string): Promise<void> {
 
   // 3. Atomic swap: clear + repopulate the mirror in a single transaction.
   await db.withTransactionAsync(async () => {
-    await db.execAsync(`DELETE FROM cloud_collections; DELETE FROM cloud_collection_items;`);
+    await db.execAsync(`DELETE FROM cloud_collections; DELETE FROM cloud_collection_items; DELETE FROM cloud_card_sales; DELETE FROM cloud_card_grading;`);
 
-    for (const raw of collections ?? []) {
+    for (const raw of collectionsData ?? []) {
       const c = raw as {
         id: string;
         user_id: string;
@@ -137,16 +246,18 @@ export async function pullCollectionsFromCloud(userId: string): Promise<void> {
         tone_start: string | null;
         tone_end: string | null;
         is_public: boolean;
+        rules: SmartBinderRules | null | undefined;
         created_at: string;
         updated_at: string;
       };
       await db.runAsync(
         `INSERT INTO cloud_collections
-         (id, user_id, kind, name, description, tone_start, tone_end, is_public, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, user_id, kind, name, description, tone_start, tone_end, is_public, rules, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           c.id, c.user_id, c.kind, c.name, c.description,
           c.tone_start, c.tone_end, c.is_public ? 1 : 0,
+          c.rules ? JSON.stringify(c.rules) : null,
           new Date(c.created_at).getTime(),
           new Date(c.updated_at).getTime(),
         ],
@@ -157,12 +268,47 @@ export async function pullCollectionsFromCloud(userId: string): Promise<void> {
       const card: Card = cachedById.get(it.card_id) ?? placeholderCard(it.card_id);
       await db.runAsync(
         `INSERT INTO cloud_collection_items
-         (id, collection_id, card_id, card_json, quantity, position, added_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (id, collection_id, card_id, card_json, quantity, position, added_at, acquired_price, acquired_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           it.id, it.collection_id, it.card_id, JSON.stringify(card),
           it.quantity, it.position,
           new Date(it.created_at).getTime(),
+          it.acquired_price,
+          it.acquired_at ? new Date(it.acquired_at).getTime() : null,
+        ],
+      );
+    }
+
+    for (const s of sales) {
+      await db.runAsync(
+        `INSERT INTO cloud_card_sales
+         (id, user_id, collection_id, card_id, card_name, card_set, cost_basis, sale_price, currency, sold_at, notes, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          s.id, s.user_id, s.collection_id, s.card_id, s.card_name, s.card_set,
+          s.cost_basis, s.sale_price, s.currency,
+          new Date(s.sold_at).getTime(),
+          s.notes,
+          new Date(s.created_at).getTime(),
+        ],
+      );
+    }
+
+    for (const g of grading) {
+      await db.runAsync(
+        `INSERT INTO cloud_card_grading
+         (id, user_id, card_id, card_name, card_set, grader, submission_id, stage,
+          submitted_at, returned_at, returned_grade, declared_value, notes, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          g.id, g.user_id, g.card_id, g.card_name, g.card_set,
+          g.grader, g.submission_id, g.stage,
+          new Date(g.submitted_at).getTime(),
+          g.returned_at ? new Date(g.returned_at).getTime() : null,
+          g.returned_grade, g.declared_value, g.notes,
+          new Date(g.created_at).getTime(),
+          new Date(g.updated_at).getTime(),
         ],
       );
     }
@@ -200,7 +346,28 @@ export type PendingOp =
   | { op_type: 'rename_collection'; payload: { id: string; name: string } }
   | { op_type: 'add_item';          payload: { id: string; collection_id: string; card_id: string; quantity?: number; position?: number } }
   | { op_type: 'remove_item';       payload: { id: string } }
-  | { op_type: 'remove_item_by_card'; payload: { collection_id: string; card_id: string } };
+  | { op_type: 'remove_item_by_card'; payload: { collection_id: string; card_id: string } }
+  | { op_type: 'set_cost_basis';    payload: { collection_id: string; card_id: string; acquired_price: number | null; acquired_at: string | null } }
+  | { op_type: 'record_sale';       payload: { id: string; collection_id: string | null; card_id: string; card_name: string; card_set: string | null; cost_basis: number | null; sale_price: number; sold_at: string } }
+  | { op_type: 'set_collection_visibility'; payload: { id: string; is_public: boolean } }
+  | { op_type: 'upsert_grading';    payload: GradingUpsertPayload }
+  | { op_type: 'delete_grading';    payload: { id: string } }
+  | { op_type: 'set_collection_rules'; payload: { id: string; rules: SmartBinderRules | null } };
+
+export interface GradingUpsertPayload {
+  id: string;
+  card_id: string;
+  card_name: string;
+  card_set: string | null;
+  grader: string;
+  submission_id: string | null;
+  stage: GradingStage;
+  submitted_at: string;            // ISO date
+  returned_at: string | null;      // ISO date
+  returned_grade: string | null;
+  declared_value: number | null;
+  notes: string | null;
+}
 
 async function enqueue(op: PendingOp): Promise<void> {
   const db = await getDb();
@@ -220,6 +387,7 @@ export interface CreateCollectionInput {
   name: string;
   toneStart?: string;
   toneEnd?: string;
+  rules?: SmartBinderRules | null;   // when non-null, binder is a smart binder
 }
 
 export async function createCollection(input: CreateCollectionInput): Promise<MirrorCollection> {
@@ -228,6 +396,7 @@ export async function createCollection(input: CreateCollectionInput): Promise<Mi
   const tone = input.kind === 'binder'
     ? [input.toneStart ?? TONE_PAIRS[0][0], input.toneEnd ?? TONE_PAIRS[0][1]]
     : [input.toneStart ?? null, input.toneEnd ?? null];
+  const rules = input.rules ?? null;
 
   const row: MirrorCollection = {
     id,
@@ -238,6 +407,7 @@ export async function createCollection(input: CreateCollectionInput): Promise<Mi
     tone_start: tone[0],
     tone_end: tone[1],
     is_public: false,
+    rules,
     created_at: now,
     updated_at: now,
   };
@@ -245,9 +415,10 @@ export async function createCollection(input: CreateCollectionInput): Promise<Mi
   const db = await getDb();
   await db.runAsync(
     `INSERT INTO cloud_collections
-     (id, user_id, kind, name, description, tone_start, tone_end, is_public, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [row.id, row.user_id, row.kind, row.name, null, row.tone_start, row.tone_end, 0, now, now],
+     (id, user_id, kind, name, description, tone_start, tone_end, is_public, rules, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [row.id, row.user_id, row.kind, row.name, null, row.tone_start, row.tone_end, 0,
+     rules ? JSON.stringify(rules) : null, now, now],
   );
 
   await enqueue({
@@ -260,7 +431,23 @@ export async function createCollection(input: CreateCollectionInput): Promise<Mi
       tone_end: row.tone_end,
     },
   });
+  // create_collection's payload doesn't include rules — push them as a
+  // separate op so the cloud row is updated after creation lands.
+  if (rules) {
+    await enqueue({ op_type: 'set_collection_rules', payload: { id, rules } });
+  }
   return row;
+}
+
+/** Set or clear the rules JSON for a smart binder. Pass `null` to convert
+ *  the binder back to a manual one. */
+export async function setCollectionRules(id: string, rules: SmartBinderRules | null): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE cloud_collections SET rules = ?, updated_at = ? WHERE id = ?`,
+    [rules ? JSON.stringify(rules) : null, Date.now(), id],
+  );
+  await enqueue({ op_type: 'set_collection_rules', payload: { id, rules } });
 }
 
 export async function deleteCollection(id: string): Promise<void> {
@@ -279,6 +466,103 @@ export async function renameCollection(id: string, name: string): Promise<void> 
     [name, Date.now(), id],
   );
   await enqueue({ op_type: 'rename_collection', payload: { id, name } });
+}
+
+// ─── Grading submissions ─────────────────────────────────────────────────────
+
+export interface GradingUpsertInput {
+  id?: string;                       // omit for new, supply to update
+  userId: string;
+  cardId: string;
+  cardName: string;
+  cardSet: string | null;
+  grader: string;
+  submissionId?: string | null;
+  stage: GradingStage;
+  submittedAtMs: number;
+  returnedAtMs?: number | null;
+  returnedGrade?: string | null;
+  declaredValue?: number | null;
+  notes?: string | null;
+}
+
+/** Insert or update a grading submission. Upsert keyed on the row id. */
+export async function upsertGradingSubmission(input: GradingUpsertInput): Promise<string> {
+  const db = await getDb();
+  const id = input.id ?? uuidv4();
+  const now = Date.now();
+  const existing = await db.getFirstAsync<{ id: string; created_at: number }>(
+    `SELECT id, created_at FROM cloud_card_grading WHERE id = ?`,
+    [id],
+  );
+  const createdAt = existing?.created_at ?? now;
+
+  if (existing) {
+    await db.runAsync(
+      `UPDATE cloud_card_grading
+          SET card_id = ?, card_name = ?, card_set = ?, grader = ?,
+              submission_id = ?, stage = ?, submitted_at = ?, returned_at = ?,
+              returned_grade = ?, declared_value = ?, notes = ?, updated_at = ?
+        WHERE id = ?`,
+      [
+        input.cardId, input.cardName, input.cardSet, input.grader,
+        input.submissionId ?? null, input.stage,
+        input.submittedAtMs, input.returnedAtMs ?? null,
+        input.returnedGrade ?? null, input.declaredValue ?? null,
+        input.notes ?? null, now, id,
+      ],
+    );
+  } else {
+    await db.runAsync(
+      `INSERT INTO cloud_card_grading
+       (id, user_id, card_id, card_name, card_set, grader, submission_id, stage,
+        submitted_at, returned_at, returned_grade, declared_value, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id, input.userId, input.cardId, input.cardName, input.cardSet,
+        input.grader, input.submissionId ?? null, input.stage,
+        input.submittedAtMs, input.returnedAtMs ?? null,
+        input.returnedGrade ?? null, input.declaredValue ?? null,
+        input.notes ?? null, createdAt, now,
+      ],
+    );
+  }
+
+  await enqueue({
+    op_type: 'upsert_grading',
+    payload: {
+      id,
+      card_id:        input.cardId,
+      card_name:      input.cardName,
+      card_set:       input.cardSet,
+      grader:         input.grader,
+      submission_id:  input.submissionId ?? null,
+      stage:          input.stage,
+      submitted_at:   new Date(input.submittedAtMs).toISOString().slice(0, 10),
+      returned_at:    input.returnedAtMs ? new Date(input.returnedAtMs).toISOString().slice(0, 10) : null,
+      returned_grade: input.returnedGrade ?? null,
+      declared_value: input.declaredValue ?? null,
+      notes:          input.notes ?? null,
+    },
+  });
+  return id;
+}
+
+export async function deleteGradingSubmission(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM cloud_card_grading WHERE id = ?`, [id]);
+  await enqueue({ op_type: 'delete_grading', payload: { id } });
+}
+
+/** Toggle the `is_public` flag on a collection. RLS makes the row visible to
+ *  any signed-in user when public, and only to the owner when private. */
+export async function setCollectionVisibility(id: string, isPublic: boolean): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE cloud_collections SET is_public = ?, updated_at = ? WHERE id = ?`,
+    [isPublic ? 1 : 0, Date.now(), id],
+  );
+  await enqueue({ op_type: 'set_collection_visibility', payload: { id, is_public: isPublic } });
 }
 
 /**
@@ -320,6 +604,8 @@ export async function addItemToCollection(
     quantity: 1,
     position,
     added_at: now,
+    acquired_price: null,
+    acquired_at: null,
   };
 }
 
@@ -335,6 +621,93 @@ export async function removeItemFromCollectionByCard(
   await enqueue({
     op_type: 'remove_item_by_card',
     payload: { collection_id: collectionId, card_id: cardId },
+  });
+}
+
+/**
+ * Set or clear the cost basis (paid amount + acquisition date) for a card
+ * already in a collection. Pass `acquiredPrice: null` to clear. No-op if the
+ * card is not in the collection.
+ */
+export async function setItemCostBasis(
+  collectionId: string,
+  cardId: string,
+  acquiredPrice: number | null,
+  acquiredAt: number | null,
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE cloud_collection_items
+        SET acquired_price = ?, acquired_at = ?
+      WHERE collection_id = ? AND card_id = ?`,
+    [acquiredPrice, acquiredAt, collectionId, cardId],
+  );
+  await enqueue({
+    op_type: 'set_cost_basis',
+    payload: {
+      collection_id: collectionId,
+      card_id: cardId,
+      acquired_price: acquiredPrice,
+      // acquired_price is numeric, acquired_at is date — keep ISO string in cloud.
+      acquired_at: acquiredAt ? new Date(acquiredAt).toISOString().slice(0, 10) : null,
+    },
+  });
+}
+
+/**
+ * Record a realized sale (delta = sale_price − cost_basis) and remove the card
+ * from the collection in the same transaction. cost_basis is snapshotted from
+ * the item row so future cost-basis edits don't retroactively change history.
+ */
+export async function recordSaleAndRemove(
+  userId: string,
+  collectionId: string,
+  card: Card,
+  salePrice: number,
+  soldAtMs: number = Date.now(),
+): Promise<void> {
+  const db = await getDb();
+  const id = uuidv4();
+
+  // Snapshot cost basis from the item row (may be null).
+  const row = await db.getFirstAsync<{ acquired_price: number | null }>(
+    `SELECT acquired_price FROM cloud_collection_items
+      WHERE collection_id = ? AND card_id = ?`,
+    [collectionId, card.id],
+  );
+  const costBasis = row?.acquired_price ?? null;
+
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `INSERT INTO cloud_card_sales
+       (id, user_id, collection_id, card_id, card_name, card_set, cost_basis,
+        sale_price, currency, sold_at, notes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, userId, collectionId, card.id, card.name, card.set || null,
+       costBasis, salePrice, 'USD', soldAtMs, null, Date.now()],
+    );
+    await db.runAsync(
+      `DELETE FROM cloud_collection_items WHERE collection_id = ? AND card_id = ?`,
+      [collectionId, card.id],
+    );
+  });
+
+  await enqueue({
+    op_type: 'record_sale',
+    payload: {
+      id,
+      collection_id: collectionId,
+      card_id: card.id,
+      card_name: card.name,
+      card_set: card.set || null,
+      cost_basis: costBasis,
+      sale_price: salePrice,
+      sold_at: new Date(soldAtMs).toISOString(),
+    },
+  });
+  await enqueue({
+    op_type: 'remove_item_by_card',
+    payload: { collection_id: collectionId, card_id: card.id },
   });
 }
 
@@ -449,6 +822,53 @@ async function applyOpToCloud(opType: string, payload: Record<string, unknown>):
       if (error) throw new Error(error.message);
       return;
     }
+    case 'set_collection_visibility': {
+      const p = payload as { id: string; is_public: boolean };
+      const { error } = await supabase
+        .from('collections')
+        .update({ is_public: p.is_public })
+        .eq('id', p.id);
+      if (error) throw new Error(error.message);
+      return;
+    }
+    case 'upsert_grading': {
+      const p = payload as unknown as GradingUpsertPayload;
+      const { error } = await supabase.from('card_grading_submissions').upsert({
+        id:             p.id,
+        user_id:        user.id,
+        card_id:        p.card_id,
+        card_name:      p.card_name,
+        card_set:       p.card_set,
+        grader:         p.grader,
+        submission_id:  p.submission_id,
+        stage:          p.stage,
+        submitted_at:   p.submitted_at,
+        returned_at:    p.returned_at,
+        returned_grade: p.returned_grade,
+        declared_value: p.declared_value,
+        notes:          p.notes,
+      }, { onConflict: 'id' });
+      if (error) throw new Error(error.message);
+      return;
+    }
+    case 'delete_grading': {
+      const p = payload as { id: string };
+      const { error } = await supabase
+        .from('card_grading_submissions')
+        .delete()
+        .eq('id', p.id);
+      if (error) throw new Error(error.message);
+      return;
+    }
+    case 'set_collection_rules': {
+      const p = payload as { id: string; rules: SmartBinderRules | null };
+      const { error } = await supabase
+        .from('collections')
+        .update({ rules: p.rules })
+        .eq('id', p.id);
+      if (error) throw new Error(error.message);
+      return;
+    }
     case 'add_item': {
       const p = payload as { id: string; collection_id: string; card_id: string; position?: number };
       const { error } = await supabase.from('collection_items').upsert({
@@ -474,6 +894,35 @@ async function applyOpToCloud(opType: string, payload: Record<string, unknown>):
         .delete()
         .eq('collection_id', p.collection_id)
         .eq('card_id', p.card_id);
+      if (error) throw new Error(error.message);
+      return;
+    }
+    case 'set_cost_basis': {
+      const p = payload as { collection_id: string; card_id: string; acquired_price: number | null; acquired_at: string | null };
+      const { error } = await supabase
+        .from('collection_items')
+        .update({
+          acquired_price: p.acquired_price,
+          acquired_at:    p.acquired_at,
+        })
+        .eq('collection_id', p.collection_id)
+        .eq('card_id', p.card_id);
+      if (error) throw new Error(error.message);
+      return;
+    }
+    case 'record_sale': {
+      const p = payload as { id: string; collection_id: string | null; card_id: string; card_name: string; card_set: string | null; cost_basis: number | null; sale_price: number; sold_at: string };
+      const { error } = await supabase.from('card_sales').upsert({
+        id:            p.id,
+        user_id:       user.id,
+        collection_id: p.collection_id,
+        card_id:       p.card_id,
+        card_name:     p.card_name,
+        card_set:      p.card_set,
+        cost_basis:    p.cost_basis,
+        sale_price:    p.sale_price,
+        sold_at:       p.sold_at,
+      }, { onConflict: 'id' });
       if (error) throw new Error(error.message);
       return;
     }

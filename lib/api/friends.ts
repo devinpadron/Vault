@@ -80,12 +80,17 @@ export function useFriend(id: string) {
       if (error) throw error;
       if (!profile) return null;
 
+      // For the BINDERS hero stat we only want kind='binder', but for the
+      // "most recent card" we want any public collection of any kind.
       const { data: collections, error: cErr } = await supabase
         .from('collections')
-        .select('id')
+        .select('id, kind')
         .eq('user_id', id);
       if (cErr) throw cErr;
-      const collectionIds = (collections ?? []).map(c => (c as { id: string }).id);
+      type CollRow = { id: string; kind: string };
+      const allRows = (collections ?? []) as CollRow[];
+      const collectionIds = allRows.map(c => c.id);
+      const binderCount   = allRows.filter(c => c.kind === 'binder').length;
 
       let recent: string = '';
       if (collectionIds.length > 0) {
@@ -100,16 +105,40 @@ export function useFriend(id: string) {
         recent = join?.cards?.name ?? '';
       }
 
-      const friend = profileToFriend(profile as Profile, collectionIds.length);
+      const friend = profileToFriend(profile as Profile, binderCount);
       return { ...friend, recent };
     },
   });
 }
 
-// Returns the friend's *public* collections as Binder rows, with a deterministic
-// gradient tone derived from the collection id (see lib/binder-tones).
-// The cover card is a placeholder — adding real cover art means resolving a
-// card row per collection (deferred).
+type FriendCollectionRow = {
+  id: string;
+  kind: 'collection' | 'wishlist' | 'binder' | 'for_trade';
+  name: string;
+  description: string | null;
+  tone_start: string | null;
+  tone_end:   string | null;
+  collection_items: { count: number }[];
+};
+
+function rowToBinder(r: FriendCollectionRow): Binder {
+  const tone: [string, string] = r.tone_start && r.tone_end
+    ? [r.tone_start, r.tone_end]
+    : toneFor(r.id);
+  return {
+    id:       r.id,
+    name:     r.name,
+    subtitle: r.description ?? '',
+    count:    r.collection_items[0]?.count ?? 0,
+    cover:    PLACEHOLDER_CARD,
+    tone,
+  };
+}
+
+// Returns the friend's *public* binders only (kind = 'binder'). RLS strips
+// private rows; this hook strips non-binder kinds so the binder list stays
+// semantically a binder list. Main collection / wishlist are surfaced
+// separately via useFriendVisibleSurfaces.
 export function useFriendBinders(id: string) {
   return useQuery<Binder[]>({
     queryKey: ['friend-binders', id],
@@ -117,25 +146,49 @@ export function useFriendBinders(id: string) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('collections')
-        .select('id, name, description, collection_items(count)')
+        .select('id, kind, name, description, tone_start, tone_end, collection_items(count)')
         .eq('user_id', id)
+        .eq('kind', 'binder')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data as FriendCollectionRow[]).map(rowToBinder);
+    },
+  });
+}
+
+export interface FriendVisibleSurfaces {
+  main:     Binder | null;
+  wishlist: Binder | null;
+  binders:  Binder[];
+}
+
+/**
+ * Friend's three public surfaces in one pass. Anything not public is hidden
+ * by RLS, so `null` here means the owner hasn't shared it. The Binder shape
+ * is reused for main/wishlist so the same row layout can render any of them.
+ */
+export function useFriendVisibleSurfaces(id: string) {
+  return useQuery<FriendVisibleSurfaces>({
+    queryKey: ['friend-surfaces', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('collections')
+        .select('id, kind, name, description, tone_start, tone_end, collection_items(count)')
+        .eq('user_id', id)
+        .in('kind', ['collection', 'wishlist', 'binder'])
         .order('created_at', { ascending: false });
       if (error) throw error;
 
-      type Row = {
-        id: string;
-        name: string;
-        description: string | null;
-        collection_items: { count: number }[];
+      const rows = (data ?? []) as FriendCollectionRow[];
+      const main     = rows.find(r => r.kind === 'collection') ?? null;
+      const wishlist = rows.find(r => r.kind === 'wishlist')   ?? null;
+      const binders  = rows.filter(r => r.kind === 'binder');
+      return {
+        main:     main     ? rowToBinder(main)     : null,
+        wishlist: wishlist ? rowToBinder(wishlist) : null,
+        binders:  binders.map(rowToBinder),
       };
-      return (data as Row[]).map(r => ({
-        id:       r.id,
-        name:     r.name,
-        subtitle: r.description ?? '',
-        count:    r.collection_items[0]?.count ?? 0,
-        cover:    PLACEHOLDER_CARD,
-        tone:     toneFor(r.id),
-      }));
     },
   });
 }

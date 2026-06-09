@@ -49,8 +49,10 @@ export const EMPTY_FILTERS: CollectionFilters = {
 };
 
 export interface CollectionEntry {
-  card:     Card;
-  added_at: number;
+  card:           Card;
+  added_at:       number;
+  acquired_price: number | null;  // USD cost basis, null = not set
+  acquired_at:    number | null;  // epoch ms acquisition date, null = unknown
 }
 
 // ─── Apply ───────────────────────────────────────────────────────────────────

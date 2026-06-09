@@ -111,6 +111,9 @@ export interface Binder {
   count: number;
   cover: Card;
   tone: [string, string];
+  /** When present, the binder auto-materializes from the owner's collection
+   *  using these rules. Manual adds are ignored on smart binders. */
+  rules?: import('@/lib/db/cloud-sync').SmartBinderRules | null;
 }
 
 export interface Friend {

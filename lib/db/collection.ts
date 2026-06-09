@@ -7,7 +7,10 @@ import { getDb } from './database';
 import {
   addItemToCollection,
   getOrCreateDefaultCollection,
+  recordSaleAndRemove,
   removeItemFromCollectionByCard,
+  setCollectionVisibility,
+  setItemCostBasis,
 } from './cloud-sync';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { Card } from '@/types';
@@ -24,8 +27,13 @@ export function useCollectionEntries() {
     queryFn: async () => {
       if (!user) return [];
       const db = await getDb();
-      const rows = await db.getAllAsync<{ card_json: string; added_at: number }>(
-        `SELECT i.card_json, i.added_at
+      const rows = await db.getAllAsync<{
+        card_json: string;
+        added_at: number;
+        acquired_price: number | null;
+        acquired_at: number | null;
+      }>(
+        `SELECT i.card_json, i.added_at, i.acquired_price, i.acquired_at
            FROM cloud_collection_items i
            JOIN cloud_collections c ON c.id = i.collection_id
           WHERE c.user_id = ? AND c.kind = 'collection'
@@ -33,8 +41,10 @@ export function useCollectionEntries() {
         [user.id],
       );
       return rows.map(r => ({
-        card:     JSON.parse(r.card_json) as Card,
-        added_at: r.added_at,
+        card:           JSON.parse(r.card_json) as Card,
+        added_at:       r.added_at,
+        acquired_price: r.acquired_price,
+        acquired_at:    r.acquired_at,
       }));
     },
   });
@@ -91,5 +101,237 @@ export function useRemoveFromCollection() {
     queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
     queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, cardId] });
     queryClient.invalidateQueries({ queryKey: ['portfolio-history', user.id] });
+  };
+}
+
+// ─── Cost basis ──────────────────────────────────────────────────────────────
+
+/**
+ * Set or clear the cost basis for a card already in the user's main
+ * collection. Pass `acquiredPrice: null` to clear.
+ */
+export function useUpdateCostBasis() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return async (
+    cardId: string,
+    acquiredPrice: number | null,
+    acquiredAt: number | null = null,
+  ): Promise<void> => {
+    if (!user) throw new Error('Sign in to manage your collection.');
+    const collectionId = await getOrCreateDefaultCollection(user.id, 'collection', 'Main');
+    await setItemCostBasis(collectionId, cardId, acquiredPrice, acquiredAt);
+    queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['card-cost-basis', user.id, cardId] });
+    queryClient.invalidateQueries({ queryKey: ['portfolio-summary', user.id] });
+  };
+}
+
+/** Read the current cost basis for a single card. null = not set. */
+export function useCardCostBasis(cardId: string) {
+  const { user } = useAuth();
+  return useQuery<number | null>({
+    queryKey: ['card-cost-basis', user?.id, cardId],
+    queryFn: async () => {
+      if (!user) return null;
+      const db = await getDb();
+      const row = await db.getFirstAsync<{ acquired_price: number | null }>(
+        `SELECT i.acquired_price
+           FROM cloud_collection_items i
+           JOIN cloud_collections c ON c.id = i.collection_id
+          WHERE c.user_id = ? AND c.kind = 'collection' AND i.card_id = ?`,
+        [user.id, cardId],
+      );
+      return row?.acquired_price ?? null;
+    },
+    enabled: !!cardId,
+  });
+}
+
+// ─── Sales / realized P/L ────────────────────────────────────────────────────
+
+export interface Sale {
+  id:         string;
+  card_id:    string;
+  card_name:  string;
+  card_set:   string | null;
+  cost_basis: number | null;
+  sale_price: number;
+  sold_at:    number;
+}
+
+/**
+ * Mark a card as sold: records the sale (with cost-basis snapshot) and removes
+ * it from the collection in one transaction.
+ */
+export function useSellCard() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return async (card: Card, salePrice: number): Promise<void> => {
+    if (!user) throw new Error('Sign in to manage your collection.');
+    const collectionId = await getOrCreateDefaultCollection(user.id, 'collection', 'Main');
+    await recordSaleAndRemove(user.id, collectionId, card, salePrice);
+    queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, card.id] });
+    queryClient.invalidateQueries({ queryKey: ['portfolio-summary', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['sales', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['portfolio-history', user.id] });
+  };
+}
+
+/** Sale ledger, newest first. */
+export function useSales() {
+  const { user } = useAuth();
+  return useQuery<Sale[]>({
+    queryKey: ['sales', user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const db = await getDb();
+      const rows = await db.getAllAsync<{
+        id: string;
+        card_id: string;
+        card_name: string;
+        card_set: string | null;
+        cost_basis: number | null;
+        sale_price: number;
+        sold_at: number;
+      }>(
+        `SELECT id, card_id, card_name, card_set, cost_basis, sale_price, sold_at
+           FROM cloud_card_sales
+          WHERE user_id = ?
+          ORDER BY sold_at DESC`,
+        [user.id],
+      );
+      return rows;
+    },
+  });
+}
+
+// ─── Portfolio summary ───────────────────────────────────────────────────────
+
+export interface PortfolioSummary {
+  currentValue:   number;   // sum of card.value across collection
+  costBasisTotal: number;   // sum of acquired_price across items where set
+  unrealized:     number;   // currentValue (of items WITH cost basis) − costBasisTotal
+  realizedYtd:    number;   // sum of (sale_price − cost_basis) for sales this year
+  itemCount:      number;
+  itemsWithBasis: number;
+}
+
+/**
+ * One-shot portfolio totals for the collection header card. Recomputed when
+ * entries or sales change (both invalidated by the relevant mutations).
+ */
+export function usePortfolioSummary() {
+  const { data: entries = [] } = useCollectionEntries();
+  const { data: sales   = [] } = useSales();
+
+  const year = new Date().getFullYear();
+
+  let currentValue   = 0;
+  let costBasisTotal = 0;
+  let basisValueSum  = 0;
+  let itemsWithBasis = 0;
+  for (const e of entries) {
+    currentValue += e.card.value || 0;
+    if (e.acquired_price != null) {
+      costBasisTotal += e.acquired_price;
+      basisValueSum  += e.card.value || 0;
+      itemsWithBasis += 1;
+    }
+  }
+
+  let realizedYtd = 0;
+  for (const s of sales) {
+    if (new Date(s.sold_at).getFullYear() !== year) continue;
+    if (s.cost_basis == null) continue; // can't compute P/L without basis
+    realizedYtd += s.sale_price - s.cost_basis;
+  }
+
+  return {
+    currentValue,
+    costBasisTotal,
+    unrealized:     basisValueSum - costBasisTotal,
+    realizedYtd,
+    itemCount:      entries.length,
+    itemsWithBasis,
+  } satisfies PortfolioSummary;
+}
+
+// ─── Visibility (public/private) ─────────────────────────────────────────────
+
+interface VisibilityInfo {
+  collectionId: string | null;
+  isPublic:     boolean;
+}
+
+/**
+ * Read visibility for the user's default 'collection' or 'wishlist'. Returns
+ * `collectionId: null` if the row doesn't exist yet — the toggle UI should
+ * lazily create it via `getOrCreateDefaultCollection` when first flipped on.
+ */
+export function useCollectionVisibility(kind: 'collection' | 'wishlist') {
+  const { user } = useAuth();
+  return useQuery<VisibilityInfo>({
+    queryKey: ['collection-visibility', user?.id, kind],
+    queryFn: async () => {
+      if (!user) return { collectionId: null, isPublic: false };
+      const db = await getDb();
+      const row = await db.getFirstAsync<{ id: string; is_public: number }>(
+        `SELECT id, is_public FROM cloud_collections
+          WHERE user_id = ? AND kind = ?
+          ORDER BY created_at ASC LIMIT 1`,
+        [user.id, kind],
+      );
+      return {
+        collectionId: row?.id ?? null,
+        isPublic:     row ? row.is_public === 1 : false,
+      };
+    },
+  });
+}
+
+/** Read visibility for a specific binder (or any collection by id). */
+export function useBinderVisibility(collectionId: string) {
+  const { user } = useAuth();
+  return useQuery<boolean>({
+    queryKey: ['binder-visibility', user?.id, collectionId],
+    queryFn: async () => {
+      if (!collectionId) return false;
+      const db = await getDb();
+      const row = await db.getFirstAsync<{ is_public: number }>(
+        `SELECT is_public FROM cloud_collections WHERE id = ?`,
+        [collectionId],
+      );
+      return row?.is_public === 1;
+    },
+    enabled: !!collectionId,
+  });
+}
+
+/**
+ * Flip the public/private flag on any owned collection. For the main
+ * collection and wishlist, pass the kind so a row is auto-created when the
+ * user hasn't ever opened that surface yet.
+ */
+export function useSetCollectionVisibility() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return async (
+    args: { collectionId: string } | { kind: 'collection' | 'wishlist' },
+    isPublic: boolean,
+  ): Promise<void> => {
+    if (!user) throw new Error('Sign in to manage your collection.');
+
+    let id: string;
+    if ('collectionId' in args) {
+      id = args.collectionId;
+    } else {
+      const name = args.kind === 'wishlist' ? 'Wishlist' : 'Main';
+      id = await getOrCreateDefaultCollection(user.id, args.kind, name);
+    }
+    await setCollectionVisibility(id, isPublic);
+    queryClient.invalidateQueries({ queryKey: ['collection-visibility', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['binder-visibility', user.id, id] });
   };
 }

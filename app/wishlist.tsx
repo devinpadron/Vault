@@ -6,6 +6,8 @@ import { Card3D } from '@/components/cards/Card3D';
 import { SkeletonCardCell } from '@/components/ui/SkeletonCard';
 import { Icon } from '@/components/ui/Icon';
 import { useWishlistCards } from '@/lib/db/wishlist';
+import { useCollectionVisibility, useSetCollectionVisibility } from '@/lib/db/collection';
+import { VisibilityChip } from '@/components/ui/VisibilityChip';
 import { fmt } from '@/lib/format';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
 import { Card, cardBaseName, cardNameVariant } from '@/types';
@@ -40,6 +42,8 @@ function CardCell({ card, index }: { card: Card; index: number }) {
 export default function WishlistScreen() {
   const insets = useSafeAreaInsets();
   const { data: cards = [], isLoading } = useWishlistCards();
+  const { data: visibility } = useCollectionVisibility('wishlist');
+  const setVisibility = useSetCollectionVisibility();
 
   const pairs: [Card, Card | null][] = [];
   for (let i = 0; i < cards.length; i += 2) {
@@ -64,13 +68,21 @@ export default function WishlistScreen() {
                 The <Text style={styles.titleAccent}>wishlist</Text>
               </Text>
             </View>
-            <TouchableOpacity
-              style={styles.closeBtn}
-              onPress={() => router.back()}
-              accessibilityLabel="Close wishlist"
-            >
-              <Icon name="close" size={18} color={Colors.text} />
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+              <VisibilityChip
+                isPublic={visibility?.isPublic ?? false}
+                surfaceLabel="your wishlist"
+                compact
+                onToggle={() => setVisibility({ kind: 'wishlist' }, !(visibility?.isPublic ?? false))}
+              />
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={() => router.back()}
+                accessibilityLabel="Close wishlist"
+              >
+                <Icon name="close" size={18} color={Colors.text} />
+              </TouchableOpacity>
+            </View>
           </View>
 
           {isLoading && (
@@ -126,6 +138,11 @@ const styles = StyleSheet.create({
   },
   headerText: {
     flex: 1,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 6,
   },
   closeBtn: {
     width: 40,

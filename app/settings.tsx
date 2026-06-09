@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -6,12 +7,66 @@ import Constants from 'expo-constants';
 import { Avatar } from '@/components/ui/Avatar';
 import { Icon } from '@/components/ui/Icon';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { useCollectionEntries, useAddToCollection, useUpdateCostBasis } from '@/lib/db/collection';
+import { shareCollectionCsv, pickCsvFile, parseCsvFile, resolveImportRows } from '@/lib/csv';
 import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
   const version = Constants.expoConfig?.version ?? '—';
+  const { data: entries = [] } = useCollectionEntries();
+  const addToCollection = useAddToCollection();
+  const updateCostBasis = useUpdateCostBasis();
+  const [busy, setBusy] = useState<'export' | 'import' | null>(null);
+
+  async function handleExport() {
+    if (entries.length === 0) {
+      Alert.alert('Nothing to export', 'Your collection is empty.');
+      return;
+    }
+    setBusy('export');
+    try {
+      await shareCollectionCsv(entries);
+    } catch (e) {
+      Alert.alert('Export failed', (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleImport() {
+    setBusy('import');
+    try {
+      const file = await pickCsvFile();
+      if (!file) { setBusy(null); return; }
+      const rows = await parseCsvFile(file.uri);
+      if (rows.length === 0) {
+        Alert.alert('Empty file', 'No rows found in that CSV.');
+        return;
+      }
+      const { resolved, unresolved } = await resolveImportRows(rows);
+      let added = 0;
+      for (const { row, card } of resolved) {
+        try {
+          await addToCollection(card);
+          if (row.acquired_price != null) {
+            await updateCostBasis(card.id, row.acquired_price);
+          }
+          added += 1;
+        } catch { /* skip duplicates / errors silently for now */ }
+      }
+      Alert.alert(
+        'Import complete',
+        `Added ${added} of ${rows.length} cards.` +
+          (unresolved.length > 0 ? `\n${unresolved.length} rows didn't match a card.` : ''),
+      );
+    } catch (e) {
+      Alert.alert('Import failed', (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   function confirmLogout() {
     Alert.alert(
@@ -65,6 +120,59 @@ export default function SettingsScreen() {
             {user.email && <Text style={styles.email}>{user.email}</Text>}
           </View>
         )}
+
+        {/* Collection tools */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Collection tools</Text>
+          <TouchableOpacity
+            style={styles.row}
+            onPress={() => router.push('/grading' as never)}
+            accessibilityRole="button"
+          >
+            <Icon name="star" size={18} color={Colors.gold} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowLabel}>Grading queue</Text>
+              <Text style={styles.rowHint}>PSA, CGC, BGS submissions</Text>
+            </View>
+            <Icon name="chevron-right" size={16} color={Colors.text3} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Data section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Data</Text>
+          <TouchableOpacity
+            style={styles.row}
+            onPress={handleExport}
+            disabled={busy !== null}
+            accessibilityRole="button"
+          >
+            <Icon name="share" size={18} color={Colors.text} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowLabel}>Export collection (CSV)</Text>
+              <Text style={styles.rowHint}>
+                {busy === 'export' ? 'Preparing…' : `${entries.length} card${entries.length === 1 ? '' : 's'}`}
+              </Text>
+            </View>
+            <Icon name="chevron-right" size={16} color={Colors.text3} />
+          </TouchableOpacity>
+          <View style={{ height: 8 }} />
+          <TouchableOpacity
+            style={styles.row}
+            onPress={handleImport}
+            disabled={busy !== null}
+            accessibilityRole="button"
+          >
+            <Icon name="plus" size={18} color={Colors.text} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowLabel}>Import from CSV</Text>
+              <Text style={styles.rowHint}>
+                {busy === 'import' ? 'Resolving cards…' : 'Vault, TCGplayer, or Collectr exports'}
+              </Text>
+            </View>
+            <Icon name="chevron-right" size={16} color={Colors.text3} />
+          </TouchableOpacity>
+        </View>
 
         {/* Account section */}
         <View style={styles.section}>
@@ -184,6 +292,13 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.body,
     fontSize: 14,
     color: Colors.text,
+  },
+  rowHint: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    letterSpacing: 0.6,
+    color: Colors.text3,
+    marginTop: 2,
   },
   rowLabelDanger: {
     flex: 1,

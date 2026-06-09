@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Alert,
   Dimensions,
   FlatList,
   Modal,
   Platform,
+  ScrollView,
   Share,
   StyleSheet,
   Text,
@@ -25,9 +26,18 @@ import {
   useDeleteBinder,
   useRemoveCardFromBinder,
   useRenameBinder,
+  useUpdateBinderRules,
 } from '@/lib/api/binders';
 import { useFriendBinder, useFriendBinderCards } from '@/lib/api/friends';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { useBinderVisibility, useSetCollectionVisibility, useCollectionEntries } from '@/lib/db/collection';
+import { SmartBinderRules } from '@/lib/db/cloud-sync';
+import { VisibilityChip } from '@/components/ui/VisibilityChip';
+import {
+  SmartRulesEditor,
+  deriveRuleOptions,
+  rulesHaveAtLeastOneFilter,
+} from '@/components/binders/SmartRulesEditor';
 import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 import { Card } from '@/types';
 
@@ -84,12 +94,24 @@ export default function BinderOpenScreen() {
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const [activePage, setActivePage] = useState(0);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [draftRules, setDraftRules] = useState<SmartBinderRules | null>(null);
+
+  // Options for the rules editor are derived from the user's main collection.
+  const { data: entries = [] } = useCollectionEntries();
+  const ruleOptions = useMemo(
+    () => deriveRuleOptions(entries.map(e => ({ set: e.card.set, rarity: e.card.rarity }))),
+    [entries],
+  );
 
   // Mutations only fire for owned binders. They're safe to instantiate
   // unconditionally — the screen just won't expose UI that calls them.
   const removeCard = useRemoveCardFromBinder();
   const renameBinder = useRenameBinder();
   const deleteBinder = useDeleteBinder();
+  const { data: isPublic = false } = useBinderVisibility((id ?? '') as string);
+  const setVisibility = useSetCollectionVisibility();
+  const updateRules = useUpdateBinderRules();
 
   if (isLoading) {
     return (
@@ -131,6 +153,7 @@ export default function BinderOpenScreen() {
   // Alias for closures — TS doesn't narrow `binder` (Binder | null) into the
   // handler functions defined below, even after the early-return null check.
   const b = binder;
+  const isSmart = !!b.rules;
 
   const { width: screenWidth } = Dimensions.get('window');
   const thumbWidth = getThumbWidth(screenWidth);
@@ -164,6 +187,31 @@ export default function BinderOpenScreen() {
     setRenameValue(b.name);
     setMenuOpen(false);
     setRenameOpen(true);
+  }
+
+  function openRulesEditor() {
+    // Seed with the binder's existing rules; for manual binders, start from
+    // an empty 'all' shell so the user has something to edit.
+    setDraftRules(b.rules ?? { match: 'all' });
+    setMenuOpen(false);
+    setRulesOpen(true);
+  }
+
+  async function commitRules() {
+    if (!draftRules) return;
+    if (!rulesHaveAtLeastOneFilter(draftRules)) {
+      Alert.alert(
+        'Pick at least one filter',
+        'A smart binder needs at least one rule — pick a set, rarity, supertype, value range, or other condition.',
+      );
+      return;
+    }
+    try {
+      await updateRules(b.id, draftRules);
+      setRulesOpen(false);
+    } catch (e) {
+      Alert.alert('Save failed', (e as Error).message);
+    }
   }
 
   async function commitRename() {
@@ -232,14 +280,22 @@ export default function BinderOpenScreen() {
           <Icon name="chevron-left" size={18} color={Colors.text} />
         </TouchableOpacity>
         {isOwn ? (
-          <TouchableOpacity
-            style={styles.navBtn}
-            onPress={() => setMenuOpen(true)}
-            accessibilityRole="button"
-            accessibilityLabel="Binder options"
-          >
-            <Icon name="menu" size={18} color={Colors.text} />
-          </TouchableOpacity>
+          <View style={styles.navActions}>
+            <VisibilityChip
+              isPublic={isPublic}
+              surfaceLabel={`binder "${b.name}"`}
+              compact
+              onToggle={() => setVisibility({ collectionId: b.id }, !isPublic)}
+            />
+            <TouchableOpacity
+              style={styles.navBtn}
+              onPress={() => setMenuOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Binder options"
+            >
+              <Icon name="menu" size={18} color={Colors.text} />
+            </TouchableOpacity>
+          </View>
         ) : (
           <View style={styles.navBtn} />
         )}
@@ -248,6 +304,7 @@ export default function BinderOpenScreen() {
       {/* Title */}
       <View style={styles.titleSection}>
         <Text style={styles.eyebrow}>
+          {isSmart ? 'SMART · ' : ''}
           {binder.subtitle || `${binder.count} ${binder.count === 1 ? 'CARD' : 'CARDS'}`}
           {pageCount > 1 ? ` · PAGE ${activePage + 1}/${pageCount}` : ''}
         </Text>
@@ -292,11 +349,11 @@ export default function BinderOpenScreen() {
                           {card ? (
                             <TouchableOpacity
                               onPress={() => router.push(`/card/${card.id}`)}
-                              onLongPress={isOwn ? () => confirmRemoveCard(card) : undefined}
+                              onLongPress={isOwn && !isSmart ? () => confirmRemoveCard(card) : undefined}
                               activeOpacity={0.85}
                               accessibilityRole="button"
                               accessibilityLabel={
-                                isOwn ? `${card.name}. Long-press to remove.` : card.name
+                                isOwn && !isSmart ? `${card.name}. Long-press to remove.` : card.name
                               }
                             >
                               <CardThumb card={card} width={thumbWidth} />
@@ -348,7 +405,7 @@ export default function BinderOpenScreen() {
           <Icon name="share" size={15} color="#0A0A0C" />
           <Text style={styles.ctaPrimaryText}>Share</Text>
         </TouchableOpacity>
-        {isOwn && (
+        {isOwn && !isSmart && (
           <TouchableOpacity style={styles.ctaIcon} onPress={handleAdd} accessibilityLabel="Add cards">
             <Icon name="plus" size={16} color={Colors.text} />
           </TouchableOpacity>
@@ -377,6 +434,39 @@ export default function BinderOpenScreen() {
             <Icon name="edit" size={18} color={Colors.text} />
             <Text style={styles.menuLabel}>Rename binder</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity style={styles.menuRow} onPress={openRulesEditor}>
+            <Icon name="flash" size={18} color={Colors.gold} />
+            <Text style={[styles.menuLabel, { color: Colors.gold }]}>
+              {isSmart ? 'Edit rules' : 'Make this smart'}
+            </Text>
+          </TouchableOpacity>
+
+          {isSmart && (
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => {
+                setMenuOpen(false);
+                Alert.alert(
+                  'Convert to manual binder?',
+                  'This binder will keep its name and tone but stop auto-filling. It will become empty — you can add cards by hand from then on.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Convert',
+                      onPress: async () => {
+                        try { await updateRules(b.id, null); }
+                        catch (e) { Alert.alert('Convert failed', (e as Error).message); }
+                      },
+                    },
+                  ],
+                );
+              }}
+            >
+              <Icon name="edit" size={18} color={Colors.text} />
+              <Text style={styles.menuLabel}>Convert to manual</Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity style={[styles.menuRow, styles.menuRowDanger]} onPress={confirmDelete}>
             <Icon name="trash" size={18} color={Colors.down} />
@@ -418,6 +508,52 @@ export default function BinderOpenScreen() {
           </TouchableOpacity>
         </View>
       </Modal>
+
+      {/* Smart-binder rules editor */}
+      <Modal
+        visible={rulesOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setRulesOpen(false)}
+        statusBarTranslucent
+      >
+        <TouchableOpacity
+          style={styles.backdrop}
+          activeOpacity={1}
+          onPress={() => setRulesOpen(false)}
+        />
+        <View style={[styles.rulesSheet, { paddingBottom: insets.bottom + 16, paddingTop: insets.top + 32 }]}>
+          <View style={styles.rulesSheetHeader}>
+            <TouchableOpacity onPress={() => setRulesOpen(false)} style={styles.navBtn}>
+              <Icon name="close" size={18} color={Colors.text} />
+            </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sheetEyebrow}>{isSmart ? 'EDIT RULES' : 'MAKE SMART'}</Text>
+              <Text style={styles.rulesSheetTitle}>{b.name}</Text>
+            </View>
+          </View>
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingHorizontal: Spacing.xl, paddingBottom: 32 }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {draftRules && (
+              <SmartRulesEditor
+                value={draftRules}
+                onChange={setDraftRules}
+                availableSets={ruleOptions.sets}
+                availableRarities={ruleOptions.rarities}
+              />
+            )}
+          </ScrollView>
+          <View style={[styles.rulesSheetFooter, { paddingHorizontal: Spacing.xl }]}>
+            <TouchableOpacity style={styles.saveBtn} onPress={commitRules}>
+              <Text style={styles.saveBtnText}>Save rules</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -434,6 +570,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   navBtn: NavButtonStyle,
+  navActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   titleSection: { paddingHorizontal: Spacing.xl, paddingBottom: 22 },
   eyebrow: {
     fontFamily: FontFamily.mono,
@@ -605,5 +742,33 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
     color: '#0A0A0C',
+  },
+  // Smart-rules editor sheet — full height so the scroll list breathes.
+  rulesSheet: {
+    position: 'absolute',
+    left: 0, right: 0, top: 0, bottom: 0,
+    backgroundColor: Colors.bg,
+    flexDirection: 'column',
+  },
+  rulesSheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: Spacing.xl,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.line,
+  },
+  rulesSheetTitle: {
+    fontFamily: FontFamily.display,
+    fontSize: 22,
+    color: Colors.text,
+    marginTop: 2,
+  },
+  rulesSheetFooter: {
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.line,
+    backgroundColor: Colors.bg,
   },
 });

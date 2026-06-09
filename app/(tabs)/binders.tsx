@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Alert, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
@@ -9,6 +9,13 @@ import { CardThumb } from '@/components/cards/CardThumb';
 import { Icon } from '@/components/ui/Icon';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { useBinders, useCreateBinder } from '@/lib/api/binders';
+import { useCollectionEntries } from '@/lib/db/collection';
+import { SmartBinderRules } from '@/lib/db/cloud-sync';
+import {
+  SmartRulesEditor,
+  deriveRuleOptions,
+  rulesHaveAtLeastOneFilter,
+} from '@/components/binders/SmartRulesEditor';
 import { TONE_PAIRS } from '@/lib/binder-tones';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
 import { Binder } from '@/types';
@@ -22,11 +29,21 @@ export default function BindersScreen() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [binderName, setBinderName] = useState('');
   const [selectedTone, setSelectedTone] = useState<[string, string]>(TONE_PAIRS[0]);
+  const [isSmart, setIsSmart] = useState(false);
+  const [draftRules, setDraftRules] = useState<SmartBinderRules>({ match: 'all' });
+
+  const { data: entries = [] } = useCollectionEntries();
+  const ruleOptions = useMemo(
+    () => deriveRuleOptions(entries.map(e => ({ set: e.card.set, rarity: e.card.rarity }))),
+    [entries],
+  );
 
   function openSheet() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setBinderName('');
     setSelectedTone(TONE_PAIRS[0]);
+    setIsSmart(false);
+    setDraftRules({ match: 'all' });
     setSheetOpen(true);
   }
 
@@ -35,7 +52,18 @@ export default function BindersScreen() {
       Alert.alert('Name required', 'Please enter a binder name.');
       return;
     }
-    await createBinder(binderName.trim(), selectedTone[0], selectedTone[1]);
+    let rules: SmartBinderRules | null = null;
+    if (isSmart) {
+      if (!rulesHaveAtLeastOneFilter(draftRules)) {
+        Alert.alert(
+          'Pick at least one filter',
+          'A smart binder needs at least one rule — pick a set, rarity, supertype, value range, or other condition.',
+        );
+        return;
+      }
+      rules = draftRules;
+    }
+    await createBinder(binderName.trim(), selectedTone[0], selectedTone[1], rules);
     setSheetOpen(false);
   }
 
@@ -140,6 +168,42 @@ export default function BindersScreen() {
             ))}
           </View>
 
+          {/* Smart binder toggle + inline rule editor */}
+          <TouchableOpacity
+            style={[styles.smartToggle, isSmart && styles.smartToggleActive]}
+            onPress={() => setIsSmart(v => !v)}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: isSmart }}
+          >
+            <Icon name="flash" size={16} color={isSmart ? Colors.gold : Colors.text2} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.smartToggleLabel, isSmart && styles.smartToggleLabelActive]}>
+                Smart binder
+              </Text>
+              <Text style={styles.smartToggleHint}>
+                Auto-fills from your collection by set + rarity. Read-only.
+              </Text>
+            </View>
+            <View style={[styles.smartIndicator, isSmart && styles.smartIndicatorActive]} />
+          </TouchableOpacity>
+
+          {isSmart && (
+            <ScrollView style={styles.rulesScroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {ruleOptions.sets.length === 0 && ruleOptions.rarities.length === 0 ? (
+                <Text style={styles.ruleEmpty}>
+                  Your collection is empty — add some cards before you can build a smart binder.
+                </Text>
+              ) : (
+                <SmartRulesEditor
+                  value={draftRules}
+                  onChange={setDraftRules}
+                  availableSets={ruleOptions.sets}
+                  availableRarities={ruleOptions.rarities}
+                />
+              )}
+            </ScrollView>
+          )}
+
           <TouchableOpacity style={styles.createBtn} onPress={handleCreate}>
             <Text style={styles.createBtnText}>Create binder</Text>
           </TouchableOpacity>
@@ -201,12 +265,22 @@ function BinderCover({
         {/* Metadata */}
         <View style={styles.meta}>
           <Text style={styles.binderName}>{binder.name}</Text>
-          <Text style={styles.binderSubtitle}>{binder.subtitle.toUpperCase()}</Text>
+          <Text style={styles.binderSubtitle}>
+            {binder.rules ? 'SMART · ' : ''}{binder.subtitle.toUpperCase()}
+          </Text>
           <View style={styles.countRow}>
             <Text style={styles.binderCount}>{binder.count}</Text>
             <Text style={styles.binderCountLabel}> cards</Text>
           </View>
         </View>
+
+        {/* Smart badge — small lightning chip in the upper right when this is
+            a smart binder so it's identifiable from the list view. */}
+        {binder.rules && (
+          <View style={styles.smartBadge}>
+            <Icon name="flash" size={12} color={Colors.gold} />
+          </View>
+        )}
 
         {/* Gloss highlight */}
         <LinearGradient
@@ -444,5 +518,104 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
     color: '#0A0A0C',
+  },
+  // Smart binder UI
+  smartToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    marginBottom: 12,
+  },
+  smartToggleActive: {
+    borderColor: 'rgba(255,215,0,0.4)',
+    backgroundColor: 'rgba(255,215,0,0.08)',
+  },
+  smartToggleLabel: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 14,
+    color: Colors.text,
+  },
+  smartToggleLabelActive: {
+    color: Colors.gold,
+  },
+  smartToggleHint: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 0.6,
+    color: Colors.text3,
+    marginTop: 2,
+  },
+  smartIndicator: {
+    width: 14, height: 14, borderRadius: 7,
+    borderWidth: 1, borderColor: Colors.line,
+    backgroundColor: 'transparent',
+  },
+  smartIndicatorActive: {
+    backgroundColor: Colors.gold,
+    borderColor: Colors.gold,
+  },
+  smartBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: 'rgba(255,215,0,0.5)',
+    backgroundColor: 'rgba(10,10,12,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rulesScroll: {
+    maxHeight: 220,
+    marginBottom: 14,
+  },
+  ruleLabel: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 1.4,
+    color: Colors.text3,
+    marginBottom: 6,
+  },
+  ruleChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 4,
+  },
+  ruleChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  ruleChipActive: {
+    borderColor: 'rgba(255,215,0,0.45)',
+    backgroundColor: 'rgba(255,215,0,0.10)',
+  },
+  ruleChipText: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    letterSpacing: 0.6,
+    color: Colors.text2,
+  },
+  ruleChipTextActive: {
+    color: Colors.gold,
+  },
+  ruleEmpty: {
+    fontFamily: FontFamily.body,
+    fontSize: 12,
+    color: Colors.text3,
+    textAlign: 'center',
+    paddingVertical: 16,
   },
 });

@@ -30,7 +30,14 @@ import { useCard, useCardPricing } from '@/lib/api/cards';
 import { sliceHistoryForRange, changForRange, avgForRange, GradedOption } from '@/lib/api/pricing';
 import { formatVariantName } from '@/lib/api/types';
 import { useBinders, useAddCardToBinder, useCreateBinder } from '@/lib/api/binders';
-import { useIsInCollection, useAddToCollection, useRemoveFromCollection } from '@/lib/db/collection';
+import {
+  useIsInCollection,
+  useAddToCollection,
+  useRemoveFromCollection,
+  useCardCostBasis,
+  useUpdateCostBasis,
+  useSellCard,
+} from '@/lib/db/collection';
 import { useIsWishlisted, useAddToWishlist, useRemoveFromWishlist } from '@/lib/db/wishlist';
 import { fmt } from '@/lib/format';
 import { TONE_PAIRS } from '@/lib/binder-tones';
@@ -347,9 +354,19 @@ export default function CardDetailScreen() {
   const { data: isInCollection = false } = useIsInCollection(card?.id ?? '');
   const addToCollection = useAddToCollection();
   const removeFromCollection = useRemoveFromCollection();
+  const { data: costBasis = null } = useCardCostBasis(card?.id ?? '');
+  const updateCostBasis = useUpdateCostBasis();
+  const sellCard = useSellCard();
   const { data: isWishlisted = false } = useIsWishlisted(card?.id ?? '');
   const addToWishlist = useAddToWishlist();
   const removeFromWishlist = useRemoveFromWishlist();
+
+  // Sold-vs-removed sheet + cost-basis editor state
+  const [removeSheetOpen, setRemoveSheetOpen]       = useState(false);
+  const [sellStage, setSellStage]                   = useState<'choose' | 'price'>('choose');
+  const [salePriceInput, setSalePriceInput]         = useState('');
+  const [costBasisSheetOpen, setCostBasisSheetOpen] = useState(false);
+  const [costBasisInput, setCostBasisInput]         = useState('');
 
   function openSheet() {
     setNewBinderMode(false);
@@ -638,7 +655,15 @@ export default function CardDetailScreen() {
         <View style={styles.ctaRow}>
           <TouchableOpacity
             style={[styles.ctaSecondary, isInCollection && styles.ctaSecondaryActive]}
-            onPress={() => isInCollection ? removeFromCollection(card.id) : addToCollection(card)}
+            onPress={() => {
+              if (isInCollection) {
+                setSellStage('choose');
+                setSalePriceInput(price != null && price > 0 ? price.toFixed(2) : '');
+                setRemoveSheetOpen(true);
+              } else {
+                addToCollection(card);
+              }
+            }}
             accessibilityLabel={isInCollection ? 'Remove from collection' : 'Add to collection'}
             accessibilityRole="button"
           >
@@ -655,6 +680,37 @@ export default function CardDetailScreen() {
             <Text style={styles.ctaPrimaryText}>Add to binder</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Cost basis row — only visible when card is in the collection. */}
+        {isInCollection && (
+          <TouchableOpacity
+            style={styles.basisRow}
+            onPress={() => {
+              setCostBasisInput(costBasis != null ? costBasis.toFixed(2) : '');
+              setCostBasisSheetOpen(true);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={costBasis != null ? 'Edit cost basis' : 'Set cost basis'}
+          >
+            <Text style={styles.basisLabel}>
+              {costBasis != null ? 'PAID' : 'COST BASIS'}
+            </Text>
+            <Text style={styles.basisValue}>
+              {costBasis != null ? `$${fmt(costBasis)}` : 'Set what you paid'}
+            </Text>
+            {costBasis != null && price != null && price > 0 && (
+              <Text
+                style={[
+                  styles.basisDelta,
+                  { color: price - costBasis >= 0 ? Colors.up : Colors.down },
+                ]}
+              >
+                {price - costBasis >= 0 ? '+' : '−'}${fmt(Math.abs(price - costBasis))}
+              </Text>
+            )}
+            <Icon name="chevron-right" size={14} color={Colors.text3} />
+          </TouchableOpacity>
+        )}
       </ScrollView>
 
       {/* Add to Binder sheet */}
@@ -711,7 +767,7 @@ export default function CardDetailScreen() {
               <Text style={styles.sheetEyebrow}>Add to binder</Text>
               <Text style={styles.sheetTitle}>Choose a destination</Text>
               <View style={styles.sheetList}>
-                {binders.map(b => (
+                {binders.filter(b => !b.rules).map(b => (
                   <TouchableOpacity
                     key={b.id}
                     style={styles.binderRow}
@@ -747,6 +803,146 @@ export default function CardDetailScreen() {
                   <Text style={styles.newBinderText}>New binder</Text>
                 </TouchableOpacity>
               </View>
+            </>
+          )}
+        </View>
+      </Modal>
+
+      {/* Cost basis editor */}
+      <Modal
+        visible={costBasisSheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setCostBasisSheetOpen(false)}
+        statusBarTranslucent
+      >
+        <TouchableOpacity
+          style={styles.backdrop}
+          activeOpacity={1}
+          onPress={() => setCostBasisSheetOpen(false)}
+        />
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <View style={styles.sheetGrabber} />
+          <Text style={styles.sheetEyebrow}>Cost basis</Text>
+          <Text style={styles.sheetTitle}>What did you pay?</Text>
+          <Text style={styles.basisHelper}>
+            Used to track unrealized and realized P/L. Leave blank to clear.
+          </Text>
+          <View style={styles.priceInputRow}>
+            <Text style={styles.priceInputDollar}>$</Text>
+            <TextInput
+              style={styles.priceInput}
+              placeholder="0.00"
+              placeholderTextColor={Colors.text3}
+              value={costBasisInput}
+              onChangeText={setCostBasisInput}
+              keyboardType="decimal-pad"
+              autoFocus
+              returnKeyType="done"
+            />
+          </View>
+          <TouchableOpacity
+            style={styles.createBtn}
+            onPress={async () => {
+              const trimmed = costBasisInput.trim();
+              const value = trimmed === '' ? null : Number(trimmed);
+              if (value != null && (!Number.isFinite(value) || value < 0)) {
+                Alert.alert('Invalid amount', 'Enter a positive dollar amount or leave blank.');
+                return;
+              }
+              await updateCostBasis(card.id, value, value != null ? Date.now() : null);
+              setCostBasisSheetOpen(false);
+            }}
+          >
+            <Text style={styles.createBtnText}>Save</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
+      {/* Sold vs just-removed prompt */}
+      <Modal
+        visible={removeSheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setRemoveSheetOpen(false)}
+        statusBarTranslucent
+      >
+        <TouchableOpacity
+          style={styles.backdrop}
+          activeOpacity={1}
+          onPress={() => setRemoveSheetOpen(false)}
+        />
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <View style={styles.sheetGrabber} />
+
+          {sellStage === 'choose' ? (
+            <>
+              <Text style={styles.sheetEyebrow}>Remove from collection</Text>
+              <Text style={styles.sheetTitle}>Did you sell it?</Text>
+              <Text style={styles.basisHelper}>
+                Recording a sale captures realized P/L. &ldquo;Just remove&rdquo; deletes
+                silently with no impact on your portfolio history.
+              </Text>
+              <TouchableOpacity
+                style={styles.removeOptionPrimary}
+                onPress={() => setSellStage('price')}
+                accessibilityRole="button"
+                accessibilityLabel="Mark as sold"
+              >
+                <Text style={styles.removeOptionPrimaryText}>Sold — record sale</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.removeOptionSecondary}
+                onPress={async () => {
+                  await removeFromCollection(card.id);
+                  setRemoveSheetOpen(false);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Just remove"
+              >
+                <Text style={styles.removeOptionSecondaryText}>Just remove</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <TouchableOpacity style={styles.backRow} onPress={() => setSellStage('choose')}>
+                <Icon name="chevron-left" size={14} color={Colors.text3} />
+                <Text style={styles.backLabel}>Back</Text>
+              </TouchableOpacity>
+              <Text style={styles.sheetEyebrow}>Record sale</Text>
+              <Text style={styles.sheetTitle}>Sale price</Text>
+              {costBasis != null && (
+                <Text style={styles.basisHelper}>
+                  Cost basis on file: ${fmt(costBasis)}
+                </Text>
+              )}
+              <View style={styles.priceInputRow}>
+                <Text style={styles.priceInputDollar}>$</Text>
+                <TextInput
+                  style={styles.priceInput}
+                  placeholder="0.00"
+                  placeholderTextColor={Colors.text3}
+                  value={salePriceInput}
+                  onChangeText={setSalePriceInput}
+                  keyboardType="decimal-pad"
+                  autoFocus
+                  returnKeyType="done"
+                />
+              </View>
+              <TouchableOpacity
+                style={styles.createBtn}
+                onPress={async () => {
+                  const value = Number(salePriceInput.trim());
+                  if (!Number.isFinite(value) || value < 0) {
+                    Alert.alert('Invalid amount', 'Enter the sale price in dollars.');
+                    return;
+                  }
+                  await sellCard(card, value);
+                  setRemoveSheetOpen(false);
+                }}
+              >
+                <Text style={styles.createBtnText}>Confirm sale</Text>
+              </TouchableOpacity>
             </>
           )}
         </View>
@@ -1455,5 +1651,91 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
     color: '#0A0A0C',
+  },
+  // Cost basis row under the CTAs
+  basisRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: Spacing.lg,
+    marginTop: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  basisLabel: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 1.4,
+    color: Colors.text3,
+  },
+  basisValue: {
+    flex: 1,
+    fontFamily: FontFamily.mono,
+    fontSize: 13,
+    color: Colors.text,
+  },
+  basisDelta: {
+    fontFamily: FontFamily.mono,
+    fontSize: 11,
+  },
+  basisHelper: {
+    fontFamily: FontFamily.body,
+    fontSize: 12,
+    color: Colors.text3,
+    lineHeight: 17,
+    marginBottom: 14,
+  },
+  // Sale price / cost basis input
+  priceInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.line,
+    borderRadius: Radius.md,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  priceInputDollar: {
+    fontFamily: FontFamily.mono,
+    fontSize: 16,
+    color: Colors.text3,
+    marginRight: 6,
+  },
+  priceInput: {
+    flex: 1,
+    paddingVertical: 14,
+    fontFamily: FontFamily.mono,
+    fontSize: 18,
+    color: Colors.text,
+  },
+  // Remove sheet
+  removeOptionPrimary: {
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: Colors.gold,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  removeOptionPrimaryText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 14,
+    color: '#0A0A0C',
+  },
+  removeOptionSecondary: {
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    alignItems: 'center',
+  },
+  removeOptionSecondaryText: {
+    fontFamily: FontFamily.body,
+    fontSize: 14,
+    color: Colors.text,
   },
 });
