@@ -1,8 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
-import { avatarFor, Profile } from './profiles';
-import { Friend, Binder, Card } from '@/types';
+import { avatarFor } from '@/lib/avatar';
+import { toneFor } from '@/lib/binder-tones';
+import { PLACEHOLDER_CARD } from '@/lib/placeholder-card';
+import { Profile } from './profiles';
+import { Friend, Binder } from '@/types';
 
 // All friends data is sourced from Supabase tables `profiles` and
 // `friendships` (RLS-protected). The historical `Friend` shape is preserved
@@ -105,41 +108,9 @@ export function useFriend(id: string) {
 }
 
 // Returns the friend's *public* collections as Binder rows, with a deterministic
-// gradient tone derived from the collection id. The cover card is a placeholder
-// — adding real cover art means resolving a card row per collection (deferred).
-const TONE_PALETTE: [string, string][] = [
-  ['#1F0E3A', '#7A6BFF'],
-  ['#3A0E0E', '#FF7A3A'],
-  ['#0E1F3A', '#5FD2FF'],
-  ['#3A2A0E', '#FFE03A'],
-  ['#0E2F1F', '#9CFF6E'],
-  ['#3A1A2E', '#FFB8E0'],
-];
-
-function toneFor(id: string): [string, string] {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
-  return TONE_PALETTE[Math.abs(hash) % TONE_PALETTE.length];
-}
-
-const PLACEHOLDER_COVER: Card = {
-  id: 'placeholder',
-  name: 'Empty',
-  variant: '—',
-  set: 'POKEVAULT',
-  no: '—',
-  release: '—',
-  rarity: 'Common',
-  value: 0,
-  change: 0,
-  trend30d: null,
-  foil: false,
-  art: ['#1F0E3A', '#2D1B5E', '#1F0E3A'],
-  creature: '○',
-  types: ['dark'],
-  artist: '—',
-};
-
+// gradient tone derived from the collection id (see lib/binder-tones).
+// The cover card is a placeholder — adding real cover art means resolving a
+// card row per collection (deferred).
 export function useFriendBinders(id: string) {
   return useQuery<Binder[]>({
     queryKey: ['friend-binders', id],
@@ -163,7 +134,7 @@ export function useFriendBinders(id: string) {
         name:     r.name,
         subtitle: r.description ?? '',
         count:    r.collection_items[0]?.count ?? 0,
-        cover:    PLACEHOLDER_COVER,
+        cover:    PLACEHOLDER_CARD,
         tone:     toneFor(r.id),
       }));
     },

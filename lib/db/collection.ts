@@ -75,8 +75,9 @@ export function useAddToCollection() {
     if (!user) throw new Error('Sign in to save cards.');
     const collectionId = await getOrCreateDefaultCollection(user.id, 'collection', 'Main');
     await addItemToCollection(collectionId, card);
-    queryClient.invalidateQueries({ queryKey: ['collection', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
     queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, card.id] });
+    queryClient.invalidateQueries({ queryKey: ['portfolio-history', user.id] });
   };
 }
 
@@ -87,7 +88,8 @@ export function useRemoveFromCollection() {
     if (!user) throw new Error('Sign in to manage your collection.');
     const collectionId = await getOrCreateDefaultCollection(user.id, 'collection', 'Main');
     await removeItemFromCollectionByCard(collectionId, cardId);
-    queryClient.invalidateQueries({ queryKey: ['collection', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
     queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, cardId] });
+    queryClient.invalidateQueries({ queryKey: ['portfolio-history', user.id] });
   };
 }

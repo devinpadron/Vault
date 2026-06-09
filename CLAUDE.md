@@ -21,7 +21,7 @@ There is no test suite. Verify correctness with `npx tsc --noEmit` and manual te
 ### Routing
 
 Expo Router v6 (file-based). All screens are in `app/`:
-- `app/(auth)/` — welcome, login, signup (gated when unauthenticated)
+- `app/(auth)/` — welcome (the only auth path today; OAuth-only via Apple + Google)
 - `app/(tabs)/` — index (Home), collection, binders, friends, market
 - `app/card/[id].tsx`, `app/binder/[id].tsx`, `app/friend/[id].tsx` — slide-up modal overlays
 - `app/scanner.tsx`, `app/search.tsx` — full-screen overlays
@@ -30,17 +30,19 @@ Navigation gating lives in `app/_layout.tsx` — it reads `AuthContext` and redi
 
 ### Data layer
 
-**Primary card source**: Supabase table `pokemon_cards`. The client is in `lib/supabase.ts` and reads `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY`. The row shape is `SupabaseCard` in `lib/api/types.ts`; `mapRow()` in the same file converts a row to the app-level `Card` type.
+**Primary card source**: Supabase table `cards`. The client is in `lib/supabase.ts` and reads `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY`. The row shape is `SupabaseCardFull` in `lib/api/types.ts`; `mapRow()` in the same file converts a row to the app-level `Card` type.
 
 **Pricing**: `lib/api/pricing.ts` (calls the Scrydex API — credentials must never be in the RN bundle; they live in the server/Edge Function environment).
 
 **Data fetching**: `@tanstack/react-query`. `QueryClientProvider` wraps the app in `app/_layout.tsx`. All API hooks use `useQuery` / `useInfiniteQuery`.
 
-**Local persistence**: `expo-sqlite` via `lib/db/database.ts` (singleton `getDb()`). Tables: `collection_cards`, `binders`, `binder_cards`, `wishlist_cards`. Hooks in `lib/db/collection.ts` and `lib/db/wishlist.ts` call `queryClient.invalidateQueries` after writes.
+**Local persistence**: `expo-sqlite` via `lib/db/database.ts` (singleton `getDb()`). Supabase is the source of truth for user data (collections, binders, wishlist); SQLite is a mirror plus an offline write queue:
+- `cloud_collections` / `cloud_collection_items` — mirror of Supabase `collections` / `collection_items` (with `card_json` embedded for fast renders)
+- `pending_ops` — FIFO queue of mutations awaiting cloud ACK (see `lib/db/cloud-sync.ts`)
+- `cache_cards` / `cache_pricing` — read caches for Scrydex-sourced metadata + pricing
+Hooks in `lib/db/collection.ts` and `lib/db/wishlist.ts` write through the mirror and call `queryClient.invalidateQueries` after writes.
 
-**Auth**: `lib/auth/AuthContext.tsx` provides `useAuth()` with `status`, `user`, `token`, `login()`, `logout()`. Tokens are stored in `expo-secure-store` via `lib/auth/storage.ts`.
-
-**Mock data**: `data/mock.ts` — target for removal (see `TODO-functional.md`). Do not add new references to `MOCK_DATA`.
+**Auth**: `lib/auth/AuthContext.tsx` provides `useAuth()` with `status`, `user`, `session`, `logout()`. Sign-in goes through Supabase OAuth (Apple via `expo-apple-authentication`, Google via `expo-web-browser` + `supabase.auth.signInWithOAuth`). The Supabase session is persisted in `AsyncStorage` (configured in `lib/supabase.ts`).
 
 ### Design system
 

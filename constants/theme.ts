@@ -37,3 +37,17 @@ export const FontFamily = {
   mono: 'JetBrainsMono_400Regular',
   monoMed: 'JetBrainsMono_500Medium',
 } as const;
+
+// 38×38 ghost-circle button used in every modal screen's nav bar. Plain
+// object (not a StyleSheet.create) so it composes cleanly with array styles
+// at the call site.
+export const NavButtonStyle = {
+  width: 38,
+  height: 38,
+  borderRadius: Radius.full,
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderWidth: 1,
+  borderColor: Colors.line,
+  backgroundColor: 'rgba(255,255,255,0.04)',
+} as const;

@@ -13,13 +13,9 @@ import {
   CollectionFilters, EMPTY_FILTERS,
   activeFilterCount, applyFilters,
 } from '@/lib/filters/collection';
+import { fmt } from '@/lib/format';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
 import { Card, cardBaseName, cardNameVariant } from '@/types';
-
-function fmt(n: number) {
-  if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
-  return n.toFixed(2);
-}
 
 function CardCell({ card, index }: { card: Card; index: number }) {
   return (

@@ -6,6 +6,7 @@ import {
   getCachedCard, setCachedCard,
   getCachedPricing, setCachedPricing, pricingCacheKey,
 } from '@/lib/db/cache';
+import { useAuth } from '@/lib/auth/AuthContext';
 import { Card as AppCard } from '@/types';
 import { SupabaseCardFull, CARD_SELECT, mapRow, FEATURED_RARITIES } from './types';
 import { getCardPricing, CardPricing, PricingQuery } from './pricing';
@@ -145,13 +146,19 @@ const RANGE_CUTOFF_DAYS: Record<PortfolioRange, number | null> = {
 };
 
 export function usePortfolioHistory(range: PortfolioRange = '30D') {
+  const { user } = useAuth();
   return useQuery<number[]>({
-    queryKey: ['portfolio-history', range],
+    queryKey: ['portfolio-history', user?.id, range],
+    enabled: !!user?.id,
     queryFn: async () => {
-      // 1. Local collection
+      // 1. Local collection (cloud mirror, kind='collection')
       const db = await getDb();
       const rows = await db.getAllAsync<{ card_id: string }>(
-        'SELECT DISTINCT card_id FROM collection_cards',
+        `SELECT DISTINCT i.card_id
+           FROM cloud_collection_items i
+           JOIN cloud_collections c ON c.id = i.collection_id
+          WHERE c.user_id = ? AND c.kind = 'collection'`,
+        [user!.id],
       );
       const cardIds = rows.map(r => r.card_id);
       if (cardIds.length === 0) return [];

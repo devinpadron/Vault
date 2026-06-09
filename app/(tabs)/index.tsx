@@ -1,4 +1,4 @@
-import { Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -8,17 +8,14 @@ import { SkeletonCard } from '@/components/ui/SkeletonCard';
 import { Sparkline } from '@/components/charts/Sparkline';
 import { Icon } from '@/components/ui/Icon';
 import { Avatar } from '@/components/ui/Avatar';
+import { NewsRow } from '@/components/news/NewsRow';
 import { useFeaturedCard, usePortfolioHistory } from '@/lib/api/cards';
 import { useNews } from '@/lib/api/news';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useCollectionCards } from '@/lib/db/collection';
+import { fmt } from '@/lib/format';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
-import { NewsItem, cardBaseName, cardNameVariant } from '@/types';
-
-function fmt(n: number) {
-  if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
-  return n.toFixed(2);
-}
+import { cardBaseName, cardNameVariant } from '@/types';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -113,7 +110,6 @@ export default function HomeScreen() {
       <Animated.View entering={FadeInDown.delay(160).duration(340)}>
         <View style={styles.sectionHeader}>
           <Text style={styles.eyebrow}>Featured · Card of the day</Text>
-          <Text style={[styles.mono, { fontSize: 10, color: Colors.gold, letterSpacing: 1.6 }]}>1/1</Text>
         </View>
         <View style={styles.featuredCard}>
           <LinearGradient
@@ -176,63 +172,11 @@ export default function HomeScreen() {
         </View>
         <View style={styles.newsList}>
           {news.slice(0, 5).map(item => (
-            <NewsRow key={item.id} item={item} />
+            <NewsRow key={item.id} item={item} compact />
           ))}
         </View>
       </Animated.View>
     </ScrollView>
-  );
-}
-
-function NewsRow({ item }: { item: NewsItem }) {
-  const onPress = () => {
-    if (item.url) Linking.openURL(item.url).catch(() => {});
-  };
-  return (
-    <TouchableOpacity
-      style={styles.newsItem}
-      onPress={onPress}
-      activeOpacity={item.url ? 0.85 : 1}
-      accessibilityRole={item.url ? 'link' : undefined}
-      accessibilityLabel={item.title}
-    >
-      <View style={styles.newsArt}>
-        {/* Gradient stays as the base layer so it shows through if the image
-            fails to load or while it's loading. */}
-        <LinearGradient
-          colors={item.art}
-          locations={[0, 0.5, 1]}
-          start={{ x: 0.5, y: 0 }}
-          end={{ x: 0.5, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-        {item.image_url ? (
-          <Image
-            source={{ uri: item.image_url }}
-            style={StyleSheet.absoluteFill}
-            resizeMode="cover"
-          />
-        ) : (
-          <LinearGradient
-            colors={['rgba(255,255,255,0.4)', 'transparent']}
-            start={{ x: 0.5, y: 0 }}
-            end={{ x: 0.5, y: 0.5 }}
-            style={StyleSheet.absoluteFill}
-          />
-        )}
-      </View>
-      <View style={styles.newsMeta}>
-        <View style={styles.newsTagRow}>
-          <Text style={styles.newsTag}>{item.tag}</Text>
-          <View style={styles.dot} />
-          <Text style={[styles.mono, { fontSize: 9, color: Colors.text3, letterSpacing: 1 }]}>{item.when}</Text>
-        </View>
-        <Text style={styles.newsTitle} numberOfLines={3}>{item.title}</Text>
-        <Text style={[styles.mono, { fontSize: 10, color: Colors.text3, marginTop: 6, letterSpacing: 1 }]}>
-          {item.minutes} MIN READ
-        </Text>
-      </View>
-    </TouchableOpacity>
   );
 }
 
@@ -282,25 +226,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.line,
     backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  iconBtnRelative: {
-    width: 40,
-    height: 40,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  badge: {
-    position: 'absolute',
-    top: 9,
-    right: 10,
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: Colors.gold,
   },
   // Stats card
   statsCard: {
@@ -432,51 +357,5 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: Colors.line,
-  },
-  newsItem: {
-    flexDirection: 'row',
-    gap: 14,
-    padding: 16,
-    backgroundColor: Colors.bg,
-    alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: Colors.line,
-  },
-  newsArt: {
-    width: 48,
-    height: 64,
-    borderRadius: 6,
-    overflow: 'hidden',
-    flexShrink: 0,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
-  newsMeta: {
-    flex: 1,
-    minWidth: 0,
-  },
-  newsTagRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 6,
-  },
-  newsTag: {
-    fontFamily: FontFamily.mono,
-    fontSize: 9,
-    letterSpacing: 1.6,
-    color: Colors.gold,
-  },
-  dot: {
-    width: 3,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: Colors.text3,
-  },
-  newsTitle: {
-    fontFamily: FontFamily.display,
-    fontSize: 15,
-    color: Colors.text,
-    lineHeight: 19,
   },
 });

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
+export { avatarFor } from '@/lib/avatar';
 
 export interface Profile {
   id: string;
@@ -16,22 +17,6 @@ export interface ProfileStats {
   binders: number;          // count of collections visible to caller
   cards: number;            // count of items across visible collections
   recent_card_name: string | null;
-}
-
-// Deterministic gradient from a user id — same palette used in AuthContext so
-// the user's own avatar matches across screens. Kept in sync manually.
-const AVATAR_PALETTE: [string, string][] = [
-  ['#FFD700', '#FF7A3A'],
-  ['#7A6BFF', '#5FD2FF'],
-  ['#9CFF6E', '#2EA15A'],
-  ['#FF7AE0', '#7B2AC9'],
-  ['#5FD2FF', '#FFB8E0'],
-];
-
-export function avatarFor(id: string): [string, string] {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
-  return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
 }
 
 const PROFILE_COLUMNS = 'id, username, display_name, avatar_url, bio, created_at, updated_at';

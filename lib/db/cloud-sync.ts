@@ -16,6 +16,7 @@
 //     binders, binder_cards, wishlist_cards) are dropped at that point.
 
 import { supabase } from '@/lib/supabase';
+import { TONE_PAIRS } from '@/lib/binder-tones';
 import { dropLegacyUserTables, getDb } from './database';
 import { Card } from '@/types';
 
@@ -213,15 +214,6 @@ async function enqueue(op: PendingOp): Promise<void> {
 
 // ─── Public mutation helpers (called from hooks) ─────────────────────────────
 
-const TONE_PALETTE: [string, string][] = [
-  ['#1F0E3A', '#7A6BFF'],
-  ['#3A0E0E', '#FF7A3A'],
-  ['#0E1F3A', '#5FD2FF'],
-  ['#3A2A0E', '#FFE03A'],
-  ['#0E2F1F', '#9CFF6E'],
-  ['#3A1A2E', '#FFB8E0'],
-];
-
 export interface CreateCollectionInput {
   userId: string;
   kind: CollectionKind;
@@ -234,7 +226,7 @@ export async function createCollection(input: CreateCollectionInput): Promise<Mi
   const id = uuidv4();
   const now = Date.now();
   const tone = input.kind === 'binder'
-    ? [input.toneStart ?? TONE_PALETTE[0][0], input.toneEnd ?? TONE_PALETTE[0][1]]
+    ? [input.toneStart ?? TONE_PAIRS[0][0], input.toneEnd ?? TONE_PAIRS[0][1]]
     : [input.toneStart ?? null, input.toneEnd ?? null];
 
   const row: MirrorCollection = {
@@ -278,15 +270,6 @@ export async function deleteCollection(id: string): Promise<void> {
     await db.runAsync(`DELETE FROM cloud_collections WHERE id = ?`, [id]);
   });
   await enqueue({ op_type: 'delete_collection', payload: { id } });
-}
-
-export async function renameCollection(id: string, name: string): Promise<void> {
-  const db = await getDb();
-  await db.runAsync(
-    `UPDATE cloud_collections SET name = ?, updated_at = ? WHERE id = ?`,
-    [name, Date.now(), id],
-  );
-  await enqueue({ op_type: 'rename_collection', payload: { id, name } });
 }
 
 /**

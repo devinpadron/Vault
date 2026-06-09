@@ -17,7 +17,7 @@ import {
   useRespondToFriendRequest,
   useSendFriendRequest,
 } from '@/lib/api/friends';
-import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 
 export default function FriendProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -136,7 +136,6 @@ export default function FriendProfileScreen() {
                       {binder.count} {binder.count === 1 ? 'CARD' : 'CARDS'}
                     </Text>
                   </View>
-                  <Icon name="chevron-right" size={14} color={Colors.text3} />
                 </View>
               ))}
             </View>
@@ -268,16 +267,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingBottom: 12,
   },
-  navBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: Radius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
+  navBtn: NavButtonStyle,
 
   hero: {
     alignItems: 'center',

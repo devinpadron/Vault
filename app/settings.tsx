@@ -6,7 +6,7 @@ import Constants from 'expo-constants';
 import { Avatar } from '@/components/ui/Avatar';
 import { Icon } from '@/components/ui/Icon';
 import { useAuth } from '@/lib/auth/AuthContext';
-import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
@@ -110,16 +110,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingBottom: 16,
   },
-  navBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: Radius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
+  navBtn: NavButtonStyle,
   navTitle: {
     fontFamily: FontFamily.display,
     fontSize: 22,

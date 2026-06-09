@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '@/components/ui/Icon';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { useMyProfile, useUpdateProfile } from '@/lib/api/profiles';
-import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 
 const USERNAME_RE = /^[a-z0-9_]{3,24}$/;
 
@@ -206,16 +206,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   navTitle: { fontFamily: FontFamily.display, fontSize: 22, color: Colors.text },
-  navBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: Radius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
+  navBtn: NavButtonStyle,
   saveBtn: {
     paddingHorizontal: 14,
     paddingVertical: 9,

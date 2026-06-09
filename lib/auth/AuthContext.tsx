@@ -8,6 +8,7 @@ import {
   pullCollectionsFromCloud,
 } from '@/lib/db/cloud-sync';
 import { prewarmFromLocalCollection } from '@/lib/api/sync-client';
+import { avatarFor } from '@/lib/avatar';
 import { User } from '@/types';
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
@@ -23,22 +24,6 @@ interface AuthContextValue extends AuthState {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-
-// Deterministic avatar gradient picker so the same user gets the same tones
-// every session, independent of any field that might change (display name).
-const AVATAR_PALETTE: [string, string][] = [
-  ['#FFD700', '#FF7A3A'],
-  ['#7A6BFF', '#5FD2FF'],
-  ['#9CFF6E', '#2EA15A'],
-  ['#FF7AE0', '#7B2AC9'],
-  ['#5FD2FF', '#FFB8E0'],
-];
-
-function avatarFor(id: string): [string, string] {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
-  return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
-}
 
 // Map a Supabase auth user to our app-level User. user_metadata.full_name is
 // the standard OAuth claim; we fall back gracefully on each step.

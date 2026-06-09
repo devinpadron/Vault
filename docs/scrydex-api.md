@@ -36,6 +36,9 @@ https://api.scrydex.com/pokemon/v1
 | GET | `/expansions` | List / search expansions |
 | GET | `/expansions/{id}` | Single expansion |
 | GET | `/expansions/{id}/cards` | Cards within an expansion |
+| POST | `/vision/v1/cards/identify` | Image recognition (Vision) — see below |
+
+> Note: the Vision endpoint is on a different base (`https://api.scrydex.com/vision/v1`) — not under `/pokemon/v1`. Same auth headers.
 
 ---
 
@@ -344,3 +347,64 @@ function getMarketPrice(card: ScrydexCardFull): number | undefined {
 ```
 
 Prices are already USD — no EUR→USD conversion needed (unlike TCGDex Cardmarket data).
+
+---
+
+## Vision API (`POST /vision/v1/cards/identify`)
+
+Image recognition for trading cards. Used by the in-app scanner (RN client →
+Supabase `identify` Edge Function → Scrydex Vision). The Edge Function is the
+only place the API key is allowed to touch — the RN bundle never sees it.
+
+**Base URL:** `https://api.scrydex.com/vision/v1` (note: NOT under `/pokemon/v1`)
+**Cost:** 5 credits per request (vs 1 for metadata). Captured in `X-Credits-Used`.
+**Latency:** typically 1–3 seconds.
+**Image limits:** JPEG / PNG / WebP, ≤ 20 MB. Recommended 1500–2500 px on the long side, 200–500 KB after optimization.
+
+### Inputs (two modes)
+
+1. **Image URL** — JSON body:
+   ```json
+   { "image_url": "https://…/card.jpg", "games": ["pokemon"] }
+   ```
+2. **File upload** — `multipart/form-data` with fields `image` (binary) and `games` (comma-separated string). This is the mobile path.
+
+### Response
+
+```json
+{
+  "data": {
+    "analysis": {
+      "type": "raw" | "graded",
+      "game": "pokemon",
+      "language_code": "EN",
+      "graded_details": {                  // present when type === "graded"
+        "company":      "PSA",
+        "grade_code":   "GEM-MT",
+        "grade_label":  "Gem Mint",
+        "grade_number": "10",
+        "year":         "2026",
+        "cert":         "149202555"
+      }
+    },
+    "matches": [
+      {
+        "score":   1.13252,                // combined visual + data signal
+        "variant": "holofoil",             // optional
+        "card":    { /* ScrydexCardBrief */ }
+      }
+    ],
+    "page_size":   100,
+    "count":       1,
+    "total_count": 1
+  }
+}
+```
+
+Scores typically sit in **0.7 – 1.3+**. Bucketing used by the scanner (`lib/api/vision.ts:confidenceLabel`):
+- `>= 1.0` — strong match
+- `0.85 – 1.0` — likely
+- `< 0.85` — possible (still shown, but flagged)
+- below `MIN_MATCH_SCORE = 0.7` — treated as no match.
+
+The matched `card.id` uses the same scheme as `/cards/{id}` (e.g. `me2pt5-284`), so we route the top match to our existing `/card/[id]` screen.

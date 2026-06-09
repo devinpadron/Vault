@@ -1,110 +1,67 @@
-import { Card3D } from "@/components/cards/Card3D";
 import { Icon } from "@/components/ui/Icon";
-import { SkeletonCard } from "@/components/ui/SkeletonCard";
-import { Colors, FontFamily, Radius } from "@/constants/theme";
-import { useFeaturedCard } from "@/lib/api/cards";
-import { useAddToCollection } from "@/lib/db/collection";
-import { cardBaseName, cardNameVariant } from "@/types";
+import { Colors, FontFamily, Radius, Spacing } from "@/constants/theme";
+import {
+  VisionAnalysis,
+  VisionMatch,
+  confidenceLabel,
+  identifyCardFromImage,
+} from "@/lib/api/vision";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import Animated, {
   Easing,
+  FadeInUp,
   cancelAnimation,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
-  withSpring,
   withTiming,
-  type SharedValue,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-type Phase = "scanning" | "identified";
+// Scrydex Vision is the recognition pipeline. The capture flow goes:
+//   photo  ──► /functions/v1/identify  ──► Scrydex /vision/v1/cards/identify
+//   ◄── matches[] with confidence scores ───────────────────────────────────
+//
+// The API key never leaves the Edge Function. Scores typically sit in
+// the 0.7–1.3+ band; we bucket them into strong / likely / low for display
+// (see confidenceLabel in lib/api/vision.ts).
 
-/** Rapid multi-impact burst that mirrors the visual confetti pop. */
-async function playConfettiBurst() {
-  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-  await new Promise<void>((r) => setTimeout(r, 55));
-  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  await new Promise<void>((r) => setTimeout(r, 65));
-  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-  await new Promise<void>((r) => setTimeout(r, 50));
-  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  await new Promise<void>((r) => setTimeout(r, 70));
-  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-}
+type Phase = "scanning" | "captured";
+
+type IdentifyState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "matched"; matches: VisionMatch[]; analysis: VisionAnalysis | null }
+  | { kind: "no-match" }
+  | { kind: "error"; message: string };
 
 const RETICLE_W = 240;
 const RETICLE_H = 336;
 
-const PARTICLE_CONFIGS = Array.from({ length: 14 }, (_, i) => ({
-  angle: (i / 14) * Math.PI * 2,
-  distance: 70 + (i % 3) * 28,
-  color: [
-    Colors.gold,
-    "#FF7A3A",
-    "#5FD2FF",
-    "#9CFF6E",
-    "#FF5FB6",
-    "#7A6BFF",
-    "#FFB8E0",
-    "#FF5C5C",
-    "#4ADE80",
-    "#FFE03A",
-    "#C9A700",
-    "#2A6BC9",
-    "#C06AAF",
-    "#FF7AE0",
-  ][i],
-}));
-
-function Particle({
-  angle,
-  distance,
-  color,
-  progress,
-}: {
-  angle: number;
-  distance: number;
-  color: string;
-  progress: SharedValue<number>;
-}) {
-  const style = useAnimatedStyle(() => {
-    const p = progress.value;
-    return {
-      opacity: p < 0.65 ? 1 : 1 - (p - 0.65) / 0.35,
-      transform: [
-        { translateX: Math.cos(angle) * distance * p },
-        { translateY: Math.sin(angle) * distance * p },
-      ],
-    };
-  });
-  return (
-    <Animated.View
-      style={[styles.particle, { backgroundColor: color }, style]}
-    />
-  );
-}
-
-function fmt(n: number) {
-  return n >= 1000
-    ? n.toLocaleString("en-US", { maximumFractionDigits: 0 })
-    : n.toFixed(2);
-}
+// Anything below this is treated as "no usable match" — surfacing a 0.4 score
+// to the user would be more confusing than helpful.
+const MIN_MATCH_SCORE = 0.7;
 
 export default function ScannerScreen() {
   const insets = useSafeAreaInsets();
   const [phase, setPhase] = useState<Phase>("scanning");
-  const [scanCount, setScanCount] = useState(0);
+  const [torchOn, setTorchOn] = useState(false);
+  const [capturedUri, setCapturedUri] = useState<string | null>(null);
+  const [identify, setIdentify] = useState<IdentifyState>({ kind: "idle" });
   const [permission, requestPermission] = useCameraPermissions();
-  // Until Scrydex image recognition is wired, the "identified" card is a
-  // random Featured from Supabase so navigation, collection adds, and pricing
-  // look-ups all work end-to-end against live data.
-  const { data: identifiedCard } = useFeaturedCard();
-  const addToCollection = useAddToCollection();
+  const cameraRef = useRef<CameraView | null>(null);
 
   // Auto-request permission on first mount. If the user previously denied it,
   // they can re-grant via the in-screen button below.
@@ -115,11 +72,9 @@ export default function ScannerScreen() {
   }, [permission, requestPermission]);
 
   const beamY = useSharedValue(0);
-  const particleProgress = useSharedValue(0);
-  const cardY = useSharedValue(60);
-  const cardOpacity = useSharedValue(0);
 
-  // Beam animation runs during scanning phase
+  // Sweep beam runs during the scanning phase. Pauses once a photo is
+  // captured so the frozen-frame moment reads as intentional.
   useEffect(() => {
     if (phase === "scanning") {
       beamY.value = 0;
@@ -131,50 +86,68 @@ export default function ScannerScreen() {
     } else {
       cancelAnimation(beamY);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
-
-  // Auto-transition to identified after 2.4s; re-runs on rescan.
-  // Suspended until the camera permission is actually granted — no point
-  // running the fake-scan animation if the user can't see the camera.
-  useEffect(() => {
-    if (!permission?.granted) return;
-
-    particleProgress.value = 0;
-    cardY.value = 60;
-    cardOpacity.value = 0;
-
-    const t = setTimeout(() => {
-      setPhase("identified");
-      playConfettiBurst();
-      particleProgress.value = withTiming(1, {
-        duration: 700,
-        easing: Easing.out(Easing.quad),
-      });
-      cardY.value = withSpring(0, { damping: 16, stiffness: 100 });
-      cardOpacity.value = withTiming(1, { duration: 500 });
-    }, 2400);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scanCount, permission?.granted]);
+  }, [phase, beamY]);
 
   const beamStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: beamY.value }],
   }));
 
-  const cardStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: cardY.value }],
-    opacity: cardOpacity.value,
-  }));
+  async function handleCapture() {
+    if (!cameraRef.current) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    let uri: string | null = null;
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.6 });
+      uri = photo?.uri ?? null;
+    } catch (err) {
+      if (__DEV__) console.warn("[scanner] capture failed:", err);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      return;
+    }
+    if (!uri) return;
 
-  const handleRescan = () => {
+    setCapturedUri(uri);
+    setPhase("captured");
+    setIdentify({ kind: "loading" });
+
+    try {
+      const res = await identifyCardFromImage(uri);
+      const usable = (res.matches ?? []).filter(m => m.score >= MIN_MATCH_SCORE);
+      if (usable.length === 0) {
+        setIdentify({ kind: "no-match" });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      } else {
+        setIdentify({ kind: "matched", matches: usable, analysis: res.analysis });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Identify failed";
+      if (__DEV__) console.warn("[scanner] identify failed:", err);
+      setIdentify({ kind: "error", message });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    }
+  }
+
+  function handleRetake() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCapturedUri(null);
+    setIdentify({ kind: "idle" });
     setPhase("scanning");
-    setScanCount((c) => c + 1);
-  };
+  }
+
+  function handleSearch() {
+    // Replace so back from /search returns to the tabs, not to a stale
+    // captured-photo state on the scanner.
+    router.replace("/search");
+  }
+
+  function handleOpenMatch(cardId: string) {
+    Haptics.selectionAsync();
+    router.replace(`/card/${cardId}`);
+  }
 
   // Until we have camera permission, render only the permission state — no
-  // reticle, no fake scan animation, no result sheet.
+  // reticle, no capture button, no result sheet.
   if (!permission || !permission.granted) {
     return (
       <View style={styles.screen}>
@@ -193,8 +166,8 @@ export default function ScannerScreen() {
           <Text style={styles.permissionTitle}>Camera access needed</Text>
           <Text style={styles.permissionBody}>
             {permission?.canAskAgain === false
-              ? "Vault needs camera access to scan cards. Enable it in iOS Settings → Vault → Camera, then come back."
-              : "Vault uses the camera to frame the card you’re trying to scan. Scrydex image recognition isn’t connected yet — for now scanning still works as a quick way to add a Featured card."}
+              ? "Vault needs camera access to identify a card. Enable it in iOS Settings → Vault → Camera, then come back."
+              : "Vault uses the camera to identify cards via Scrydex Vision. Capture a clear photo of the card front and we'll match it against the catalog."}
           </Text>
           {permission?.canAskAgain !== false ? (
             <TouchableOpacity
@@ -214,7 +187,12 @@ export default function ScannerScreen() {
   return (
     <View style={styles.screen}>
       {/* Camera layer — sits behind every other element. */}
-      <CameraView style={StyleSheet.absoluteFill} facing="back" />
+      <CameraView
+        ref={cameraRef}
+        style={StyleSheet.absoluteFill}
+        facing="back"
+        enableTorch={torchOn}
+      />
       {/* Dimming layer keeps the corner brackets readable against the live feed. */}
       <View
         style={[
@@ -236,133 +214,308 @@ export default function ScannerScreen() {
         </TouchableOpacity>
         <View style={styles.modeBadge}>
           <Text style={styles.modeBadgeText}>
-            {phase === "scanning" ? "SCAN MODE" : "IDENTIFIED"}
+            {phase === "scanning"
+              ? "SCAN MODE"
+              : identify.kind === "loading"
+              ? "IDENTIFYING"
+              : identify.kind === "matched"
+              ? "MATCH FOUND"
+              : "CAPTURED"}
           </Text>
         </View>
-        <TouchableOpacity
-          style={styles.iconBtn}
-          accessibilityLabel="Toggle flash"
-          accessibilityRole="button"
-        >
-          <Icon name="flash" size={16} color={Colors.text} />
-        </TouchableOpacity>
+        {phase === "scanning" ? (
+          <TouchableOpacity
+            style={[styles.iconBtn, torchOn && styles.iconBtnActive]}
+            onPress={() => {
+              Haptics.selectionAsync();
+              setTorchOn(v => !v);
+            }}
+            accessibilityLabel={torchOn ? "Turn off flash" : "Turn on flash"}
+            accessibilityRole="button"
+          >
+            <Icon name="flash" size={16} color={torchOn ? "#0A0A0C" : Colors.text} />
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.iconBtn} />
+        )}
       </View>
 
       {/* Center */}
-      <View style={styles.center}>
+      <View style={styles.center} pointerEvents="none">
         {phase === "scanning" ? (
           <View style={styles.reticle}>
-            {/* Corner brackets */}
             {[
               { top: 0, left: 0, borderTopWidth: 2, borderLeftWidth: 2 },
               { top: 0, right: 0, borderTopWidth: 2, borderRightWidth: 2 },
               { bottom: 0, left: 0, borderBottomWidth: 2, borderLeftWidth: 2 },
-              {
-                bottom: 0,
-                right: 0,
-                borderBottomWidth: 2,
-                borderRightWidth: 2,
-              },
+              { bottom: 0, right: 0, borderBottomWidth: 2, borderRightWidth: 2 },
             ].map((pos, i) => (
               <View
                 key={i}
                 style={[styles.corner, pos, { borderColor: Colors.gold }]}
               />
             ))}
-            {/* Sweep beam */}
             <Animated.View style={[styles.beam, beamStyle]} />
           </View>
         ) : (
-          <View style={styles.identifiedCenter}>
-            {/* Particle burst — all particles originate from center */}
-            <View style={styles.particleHub}>
-              {PARTICLE_CONFIGS.map((p, i) => (
-                <Particle key={i} {...p} progress={particleProgress} />
-              ))}
-            </View>
-            {/* Card materializes */}
-            <Animated.View style={cardStyle}>
-              {identifiedCard ? (
-                <Card3D
-                  card={identifiedCard}
-                  width={Math.round(RETICLE_W * 0.72)}
-                  onPress={() => router.push(`/card/${identifiedCard.id}`)}
-                />
-              ) : (
-                <SkeletonCard width={Math.round(RETICLE_W * 0.72)} />
-              )}
-            </Animated.View>
+          capturedUri && (
+            <Image
+              source={{ uri: capturedUri }}
+              style={styles.capturedPreview}
+              contentFit="cover"
+              transition={120}
+            />
+          )
+        )}
+        {phase === "captured" && identify.kind === "loading" && (
+          <View style={styles.loadingOverlay}>
+            <ActivityIndicator color={Colors.gold} />
+            <Text style={styles.loadingText}>Identifying…</Text>
           </View>
         )}
       </View>
 
       {/* Bottom */}
       {phase === "scanning" ? (
-        <View
-          style={[styles.scanBottom, { paddingBottom: insets.bottom + 24 }]}
-        >
-          <Text style={styles.analyzeLabel}>● ANALYZING</Text>
-          <Text style={styles.hint}>Hold steady — frame the card</Text>
+        <View style={[styles.scanBottom, { paddingBottom: insets.bottom + 24 }]}>
+          <Text style={styles.hint}>Frame the card</Text>
           <Text style={styles.subLabel}>
-            IMAGE HASH · SET LOOKUP · PRICE FETCH
+            Hold steady and capture — Scrydex Vision will identify the card.
           </Text>
+          <TouchableOpacity
+            onPress={handleCapture}
+            style={styles.captureBtn}
+            accessibilityLabel="Capture and identify"
+            accessibilityRole="button"
+            activeOpacity={0.85}
+          >
+            <View style={styles.captureBtnInner} />
+          </TouchableOpacity>
         </View>
       ) : (
         <Animated.View
-          entering={require("react-native-reanimated").FadeInUp.duration(350)}
+          entering={FadeInUp.duration(280)}
           style={[styles.resultSheet, { paddingBottom: insets.bottom + 16 }]}
         >
           <View style={styles.resultGrabber} />
-          <Text style={styles.confidence}>97.4% · MATCH</Text>
-          <View style={styles.resultMeta}>
-            <Text style={styles.resultName}>
-              {identifiedCard ? cardBaseName(identifiedCard.name) : "—"}
-              {identifiedCard && cardNameVariant(identifiedCard.name) && (
-                <Text style={styles.resultVariant}>
-                  {" "}
-                  {cardNameVariant(identifiedCard.name)}
-                </Text>
-              )}
-            </Text>
-            <Text style={styles.resultSet}>
-              {identifiedCard
-                ? `${identifiedCard.set} · ${identifiedCard.no}`
-                : ""}
-            </Text>
-          </View>
-          <Text style={styles.resultPrice}>
-            {identifiedCard && identifiedCard.value > 0
-              ? `$${fmt(identifiedCard.value)}`
-              : "—"}
-          </Text>
-          <View style={styles.resultCtaRow}>
-            <TouchableOpacity
-              style={styles.rescanBtn}
-              onPress={handleRescan}
-              accessibilityLabel="Rescan card"
-              accessibilityRole="button"
-            >
-              <Text style={styles.rescanText}>Rescan</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.addBtn}
-              accessibilityLabel="Add card to collection"
-              accessibilityRole="button"
-              onPress={async () => {
-                if (!identifiedCard) return;
-                await addToCollection(identifiedCard);
-                Haptics.notificationAsync(
-                  Haptics.NotificationFeedbackType.Success,
-                );
-                router.back();
-              }}
-            >
-              <Text style={styles.addBtnText}>Add to collection</Text>
-            </TouchableOpacity>
-          </View>
+          {identify.kind === "loading" && (
+            <ResultLoading />
+          )}
+          {identify.kind === "matched" && (
+            <ResultMatched
+              matches={identify.matches}
+              analysis={identify.analysis}
+              onOpen={handleOpenMatch}
+              onRetake={handleRetake}
+              onSearch={handleSearch}
+            />
+          )}
+          {identify.kind === "no-match" && (
+            <ResultEmpty onRetake={handleRetake} onSearch={handleSearch} />
+          )}
+          {identify.kind === "error" && (
+            <ResultError
+              message={identify.message}
+              onRetake={handleRetake}
+              onSearch={handleSearch}
+            />
+          )}
         </Animated.View>
       )}
     </View>
+  );
+}
+
+// Prefer the explicit front image — Scrydex returns both faces for some
+// cards and array order isn't guaranteed.
+function frontImage(m: VisionMatch) {
+  const imgs = m.card.images ?? [];
+  return imgs.find(i => i.type === "front") ?? imgs[0];
+}
+
+function ResultLoading() {
+  return (
+    <>
+      <Text style={styles.resultEyebrow}>SCRYDEX VISION</Text>
+      <Text style={styles.resultTitle}>Identifying card…</Text>
+      <Text style={styles.resultBody}>
+        Matching against the Pokémon catalog. This usually takes 1–3 seconds.
+      </Text>
+    </>
+  );
+}
+
+function ResultMatched({
+  matches,
+  analysis,
+  onOpen,
+  onRetake,
+  onSearch,
+}: {
+  matches: VisionMatch[];
+  analysis: VisionAnalysis | null;
+  onOpen: (id: string) => void;
+  onRetake: () => void;
+  onSearch: () => void;
+}) {
+  const top = matches[0];
+  const alternates = matches.slice(1, 4);
+  const topImage = frontImage(top);
+  const label = confidenceLabel(top.score);
+  const labelText =
+    label === "strong" ? "Strong match" : label === "likely" ? "Likely match" : "Possible match";
+  const labelColor =
+    label === "strong" ? Colors.up : label === "likely" ? Colors.gold : Colors.text2;
+
+  return (
+    <>
+      <View style={styles.matchHeader}>
+        <Text style={[styles.confidenceLabel, { color: labelColor }]}>
+          {labelText} · {top.score.toFixed(2)}
+        </Text>
+        {analysis?.graded_details && (
+          <Text style={styles.gradedTag}>
+            {analysis.graded_details.company} {analysis.graded_details.grade_number}
+          </Text>
+        )}
+      </View>
+
+      <TouchableOpacity
+        style={styles.topMatch}
+        onPress={() => onOpen(top.card.id)}
+        accessibilityLabel={`Open ${top.card.name}`}
+        accessibilityRole="button"
+        activeOpacity={0.85}
+      >
+        {topImage?.medium ? (
+          <Image
+            source={{ uri: topImage.medium }}
+            style={styles.topMatchImage}
+            contentFit="cover"
+            transition={200}
+          />
+        ) : (
+          <View style={[styles.topMatchImage, styles.imagePlaceholder]} />
+        )}
+        <View style={styles.topMatchMeta}>
+          <Text style={styles.topMatchName} numberOfLines={2}>{top.card.name}</Text>
+          {top.card.expansion && (
+            <Text style={styles.topMatchSet}>
+              {top.card.expansion.name.toUpperCase()}
+              {top.card.printed_number ? ` · ${top.card.printed_number}` : ""}
+            </Text>
+          )}
+          {top.variant && (
+            <Text style={styles.topMatchVariant}>{top.variant}</Text>
+          )}
+          <Text style={styles.openHint}>Tap to view details →</Text>
+        </View>
+      </TouchableOpacity>
+
+      {alternates.length > 0 && (
+        <>
+          <Text style={styles.alternateLabel}>OTHER CANDIDATES</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.alternateRow}
+          >
+            {alternates.map(m => {
+              const altImg = frontImage(m);
+              return (
+              <TouchableOpacity
+                key={m.card.id}
+                style={styles.alternateCell}
+                onPress={() => onOpen(m.card.id)}
+                activeOpacity={0.85}
+                accessibilityLabel={`Open ${m.card.name}`}
+              >
+                {altImg?.small ? (
+                  <Image
+                    source={{ uri: altImg.small }}
+                    style={styles.alternateImage}
+                    contentFit="cover"
+                  />
+                ) : (
+                  <View style={[styles.alternateImage, styles.imagePlaceholder]} />
+                )}
+                <Text style={styles.alternateName} numberOfLines={1}>
+                  {m.card.name}
+                </Text>
+                <Text style={styles.alternateScore}>{m.score.toFixed(2)}</Text>
+              </TouchableOpacity>
+            );
+            })}
+          </ScrollView>
+        </>
+      )}
+
+      <View style={styles.resultCtaRow}>
+        <TouchableOpacity
+          style={styles.retakeBtn}
+          onPress={onRetake}
+          accessibilityLabel="Retake photo"
+          accessibilityRole="button"
+        >
+          <Text style={styles.retakeText}>Retake</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.ghostBtn}
+          onPress={onSearch}
+          accessibilityLabel="Search manually"
+          accessibilityRole="button"
+        >
+          <Text style={styles.ghostBtnText}>Not it — search</Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+}
+
+function ResultEmpty({ onRetake, onSearch }: { onRetake: () => void; onSearch: () => void }) {
+  return (
+    <>
+      <Text style={styles.resultEyebrow}>NO MATCH</Text>
+      <Text style={styles.resultTitle}>Couldn&apos;t identify this card</Text>
+      <Text style={styles.resultBody}>
+        Try retaking with the card filling more of the frame and better lighting,
+        or search by the card&apos;s name.
+      </Text>
+      <View style={styles.resultCtaRow}>
+        <TouchableOpacity style={styles.retakeBtn} onPress={onRetake}>
+          <Text style={styles.retakeText}>Retake</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.searchBtn} onPress={onSearch}>
+          <Text style={styles.searchBtnText}>Search by name</Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+}
+
+function ResultError({
+  message,
+  onRetake,
+  onSearch,
+}: {
+  message: string;
+  onRetake: () => void;
+  onSearch: () => void;
+}) {
+  return (
+    <>
+      <Text style={[styles.resultEyebrow, { color: Colors.down }]}>IDENTIFY FAILED</Text>
+      <Text style={styles.resultTitle}>Something went wrong</Text>
+      <Text style={styles.resultBody}>{message}</Text>
+      <View style={styles.resultCtaRow}>
+        <TouchableOpacity style={styles.retakeBtn} onPress={onRetake}>
+          <Text style={styles.retakeText}>Retake</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.searchBtn} onPress={onSearch}>
+          <Text style={styles.searchBtnText}>Search by name</Text>
+        </TouchableOpacity>
+      </View>
+    </>
   );
 }
 
@@ -386,6 +539,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  iconBtnActive: {
+    backgroundColor: Colors.gold,
+  },
   modeBadge: {
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -398,15 +554,13 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     color: Colors.text,
   },
-  // Camera permission prompt — flows after the top bar so the close button
-  // stays tappable. Center-aligned vertically within remaining space.
   permissionPrompt: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 28,
     gap: 12,
-    top: -60, // Visual tweak to better center text block with the top bar present
+    top: -60,
   },
   permissionTitle: {
     fontFamily: FontFamily.display,
@@ -441,13 +595,11 @@ const styles = StyleSheet.create({
     textAlign: "center",
     letterSpacing: 0.5,
   },
-  // Center
   center: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
   },
-  // Scanning reticle
   reticle: {
     width: RETICLE_W,
     height: RETICLE_H,
@@ -471,34 +623,32 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 4,
   },
-  // Identified
-  identifiedCenter: {
-    alignItems: "center",
-    justifyContent: "center",
+  capturedPreview: {
+    width: RETICLE_W,
+    height: RETICLE_H,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: Colors.gold,
   },
-  particleHub: {
+  loadingOverlay: {
     position: "absolute",
+    bottom: 16,
+    left: 0,
+    right: 0,
     alignItems: "center",
-    justifyContent: "center",
+    gap: 6,
   },
-  particle: {
-    position: "absolute",
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  loadingText: {
+    fontFamily: FontFamily.mono,
+    fontSize: 11,
+    letterSpacing: 1.4,
+    color: Colors.text,
   },
-  // Scan bottom
   scanBottom: {
     alignItems: "center",
     paddingHorizontal: 22,
     paddingTop: 24,
-  },
-  analyzeLabel: {
-    fontFamily: FontFamily.mono,
-    fontSize: 10,
-    letterSpacing: 1.6,
-    color: Colors.gold,
-    marginBottom: 8,
+    gap: 12,
   },
   hint: {
     fontFamily: FontFamily.display,
@@ -508,13 +658,29 @@ const styles = StyleSheet.create({
   },
   subLabel: {
     fontFamily: FontFamily.mono,
-    fontSize: 11,
+    fontSize: 10,
     color: Colors.text3,
-    marginTop: 8,
-    letterSpacing: 1.2,
+    letterSpacing: 0.8,
     textAlign: "center",
+    lineHeight: 15,
+    maxWidth: 280,
   },
-  // Result sheet
+  captureBtn: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    borderWidth: 4,
+    borderColor: "rgba(255,255,255,0.85)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+  },
+  captureBtnInner: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: Colors.gold,
+  },
   resultSheet: {
     backgroundColor: Colors.elevated,
     borderTopLeftRadius: 24,
@@ -531,47 +697,140 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     marginBottom: 14,
   },
-  confidence: {
+  resultEyebrow: {
     fontFamily: FontFamily.mono,
     fontSize: 9,
     letterSpacing: 2,
     textTransform: "uppercase",
-    color: Colors.up,
+    color: Colors.text3,
     marginBottom: 6,
   },
-  resultMeta: {
-    marginBottom: 12,
-  },
-  resultName: {
+  resultTitle: {
     fontFamily: FontFamily.display,
-    fontSize: 28,
+    fontSize: 26,
     color: Colors.text,
-    lineHeight: 32,
+    lineHeight: 30,
+    marginBottom: 8,
   },
-  resultVariant: {
-    fontFamily: FontFamily.displayItalic,
-    fontSize: 28,
-    color: Colors.gold,
+  resultBody: {
+    fontFamily: FontFamily.body,
+    fontSize: 13,
+    color: Colors.text2,
+    lineHeight: 19,
+    marginBottom: 18,
   },
-  resultSet: {
+  // Matched layout
+  matchHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  confidenceLabel: {
     fontFamily: FontFamily.mono,
     fontSize: 10,
-    color: Colors.text3,
-    letterSpacing: 1.4,
-    marginTop: 3,
+    letterSpacing: 1.8,
   },
-  resultPrice: {
-    fontFamily: FontFamily.mono,
-    fontSize: 24,
+  gradedTag: {
+    fontFamily: FontFamily.monoMed,
+    fontSize: 10,
+    letterSpacing: 1.2,
+    color: Colors.gold,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: "rgba(255,215,0,0.4)",
+    backgroundColor: "rgba(255,215,0,0.1)",
+  },
+  topMatch: {
+    flexDirection: "row",
+    gap: 14,
+    padding: 12,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    marginBottom: 14,
+  },
+  topMatchImage: {
+    width: 72,
+    height: 100,
+    borderRadius: 6,
+    backgroundColor: Colors.bg,
+  },
+  imagePlaceholder: {
+    backgroundColor: "rgba(255,255,255,0.05)",
+  },
+  topMatchMeta: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: "center",
+    gap: 4,
+  },
+  topMatchName: {
+    fontFamily: FontFamily.display,
+    fontSize: 18,
     color: Colors.text,
-    letterSpacing: -0.5,
-    marginBottom: 16,
+    lineHeight: 22,
+  },
+  topMatchSet: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 1.4,
+    color: Colors.text3,
+  },
+  topMatchVariant: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    color: Colors.text2,
+    letterSpacing: 0.8,
+  },
+  openHint: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 1.2,
+    color: Colors.gold,
+    marginTop: 4,
+  },
+  alternateLabel: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 1.8,
+    color: Colors.text3,
+    marginBottom: 8,
+  },
+  alternateRow: {
+    flexDirection: "row",
+    gap: Spacing.sm,
+    paddingBottom: 4,
+  },
+  alternateCell: {
+    width: 76,
+    gap: 4,
+  },
+  alternateImage: {
+    width: 76,
+    height: 106,
+    borderRadius: 6,
+    backgroundColor: Colors.bg,
+  },
+  alternateName: {
+    fontFamily: FontFamily.body,
+    fontSize: 11,
+    color: Colors.text,
+  },
+  alternateScore: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    color: Colors.text3,
   },
   resultCtaRow: {
     flexDirection: "row",
     gap: 10,
+    marginTop: 14,
   },
-  rescanBtn: {
+  retakeBtn: {
     paddingHorizontal: 20,
     paddingVertical: 13,
     borderRadius: Radius.md,
@@ -581,12 +840,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  rescanText: {
+  retakeText: {
     fontFamily: FontFamily.bodySemi,
     fontSize: 13,
     color: Colors.text,
   },
-  addBtn: {
+  searchBtn: {
     flex: 1,
     paddingVertical: 13,
     borderRadius: Radius.md,
@@ -594,9 +853,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  addBtnText: {
+  searchBtnText: {
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
     color: "#0A0A0C",
+  },
+  ghostBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ghostBtnText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 13,
+    color: Colors.text,
   },
 });

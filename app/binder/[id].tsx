@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   Dimensions,
   ScrollView,
@@ -14,7 +13,7 @@ import { CardThumb } from '@/components/cards/CardThumb';
 import { Icon } from '@/components/ui/Icon';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { useBinder, useBinderCards } from '@/lib/api/binders';
-import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 import { Card } from '@/types';
 
 const CONTAINER_MARGIN = 18;
@@ -22,7 +21,6 @@ const CONTAINER_PADDING = 14;
 const COL_GAP = 10;
 const SLEEVE_PADDING = 4;
 const NUM_COLS = 3;
-const NUM_PAGES = 5;
 
 function getThumbWidth(screenWidth: number) {
   const inner = screenWidth - CONTAINER_MARGIN * 2 - CONTAINER_PADDING * 2;
@@ -32,7 +30,6 @@ function getThumbWidth(screenWidth: number) {
 
 export default function BinderOpenScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const [activePage, setActivePage] = useState(0);
   const insets = useSafeAreaInsets();
 
   const { data: binder, isLoading, isError, error, refetch } = useBinder(id ?? '');
@@ -97,14 +94,7 @@ export default function BinderOpenScreen() {
           <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
             <Icon name="chevron-left" size={18} color={Colors.text} />
           </TouchableOpacity>
-          <View style={styles.navActions}>
-            <TouchableOpacity style={styles.navBtn}>
-              <Icon name="send" size={18} color={Colors.text} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.navBtn}>
-              <Icon name="menu" size={18} color={Colors.text} />
-            </TouchableOpacity>
-          </View>
+          <View style={styles.navBtn} />
         </View>
 
         {/* Title */}
@@ -134,7 +124,14 @@ export default function BinderOpenScreen() {
                   {row.map((card, colIndex) => (
                     <View key={colIndex} style={[styles.sleeve, { width: thumbWidth + SLEEVE_PADDING * 2 }]}>
                       {card ? (
-                        <CardThumb card={card} width={thumbWidth} />
+                        <TouchableOpacity
+                          onPress={() => router.push(`/card/${card.id}`)}
+                          activeOpacity={0.85}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Open ${card.name}`}
+                        >
+                          <CardThumb card={card} width={thumbWidth} />
+                        </TouchableOpacity>
                       ) : (
                         <View style={{ width: thumbWidth, height: Math.floor(thumbWidth * 1.4), backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 4 }} />
                       )}
@@ -158,26 +155,6 @@ export default function BinderOpenScreen() {
             </View>
           )}
 
-          {/* Pagination dots */}
-          <View style={styles.dotsRow}>
-            {Array.from({ length: NUM_PAGES }).map((_, i) => (
-              <TouchableOpacity
-                key={i}
-                onPress={() => setActivePage(i)}
-                style={[styles.dot, i === activePage && styles.dotActive]}
-              />
-            ))}
-          </View>
-        </View>
-
-        {/* CTAs */}
-        <View style={styles.ctaRow}>
-          <TouchableOpacity style={styles.ctaPrimary}>
-            <Text style={styles.ctaPrimaryText}>Share binder</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.ctaIcon}>
-            <Icon name="plus" size={16} color={Colors.text} />
-          </TouchableOpacity>
         </View>
       </ScrollView>
     </View>
@@ -202,20 +179,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingBottom: 12,
   },
-  navActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  navBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
+  navBtn: NavButtonStyle,
   loadingText: {
     fontFamily: FontFamily.body,
     fontSize: 14,
@@ -280,49 +244,5 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
-  },
-  dotsRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 4,
-    marginTop: 14,
-  },
-  dot: {
-    width: 5,
-    height: 5,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.3)',
-  },
-  dotActive: {
-    width: 16,
-    backgroundColor: 'rgba(255,255,255,0.9)',
-  },
-  ctaRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginHorizontal: Spacing.xl,
-    marginTop: 24,
-  },
-  ctaPrimary: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: Radius.md,
-    backgroundColor: Colors.gold,
-    alignItems: 'center',
-  },
-  ctaPrimaryText: {
-    fontFamily: FontFamily.bodySemi,
-    fontSize: 14,
-    color: '#0A0A0C',
-  },
-  ctaIcon: {
-    width: 50,
-    paddingVertical: 14,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 });

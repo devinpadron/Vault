@@ -65,52 +65,6 @@ export const FOIL_RARITIES = new Set([
   'ACE SPEC Rare',
 ]);
 
-export const RARITY_VALUES: Record<string, { value: number; change: number }> = {
-  'Special Illustration Rare': { value: 9800,  change: 480    },
-  'Hyper Rare':                { value: 5400,  change: 210    },
-  'Shiny Ultra Rare':          { value: 4600,  change: 156    },
-  'Illustration Rare':         { value: 4280,  change: 124.50 },
-  'Ultra Rare':                { value: 2140,  change: 84     },
-  'Shiny Rare':                { value: 1840,  change: 42     },
-  'Double Rare':               { value: 1620,  change: 18.20  },
-  'Amazing Rare':              { value: 1320,  change: 32.80  },
-  'ACE SPEC Rare':             { value: 1080,  change: 28     },
-  'Rare Holo':                 { value: 980,   change: -12.40 },
-  'Radiant Rare':              { value: 760,   change: 14.40  },
-  'VMAX Rare':                 { value: 620,   change: 10.20  },
-  'VSTAR Rare':                { value: 380,   change: -8.10  },
-  'Rare':                      { value: 240,   change: 4.10   },
-  'Uncommon':                  { value: 12,    change: 0      },
-  'Common':                    { value: 4,     change: 0      },
-};
-
-export const RARITY_VARIANTS: Record<string, string> = {
-  'Special Illustration Rare': 'EX ★',
-  'Hyper Rare':                '★★',
-  'Shiny Ultra Rare':          'Shiny ★',
-  'Illustration Rare':         '★',
-  'Ultra Rare':                'V',
-  'Double Rare':               'ex',
-  'VMAX Rare':                 'VMAX',
-  'VSTAR Rare':                'VSTAR',
-  'Amazing Rare':              '★A',
-  'Radiant Rare':              'Radiant',
-  'Shiny Rare':                'Shiny',
-  'ACE SPEC Rare':             'ACE',
-  'Rare Holo':                 'Holo',
-  'Rare':                      '—',
-  'Uncommon':                  '—',
-  'Common':                    '—',
-};
-
-export const HIGH_VALUE_RARITIES = [
-  'Special Illustration Rare',
-  'Hyper Rare',
-  'Illustration Rare',
-  'Ultra Rare',
-  'Double Rare',
-] as const;
-
 export const FEATURED_RARITIES = [
   'Special Illustration Rare',
   'Hyper Rare',
@@ -325,7 +279,7 @@ export function mapRow(row: SupabaseCardFull, index = 0): AppCard {
   return {
     id:                       row.id,
     name:                     row.name,
-    variant:                  row.card_variants[0]?.name ?? RARITY_VARIANTS[rarity] ?? '—',
+    variant:                  row.card_variants[0]?.name ?? '—',
     set:                      row.expansions.name.toUpperCase(),
     series:                   row.expansions.series ?? undefined,
     no:                       row.printed_number ?? row.number ?? '—',

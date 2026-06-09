@@ -29,22 +29,10 @@ import { formatVariantName } from '@/lib/api/types';
 import { useBinders, useAddCardToBinder, useCreateBinder } from '@/lib/api/binders';
 import { useIsInCollection, useAddToCollection, useRemoveFromCollection } from '@/lib/db/collection';
 import { useIsWishlisted, useAddToWishlist, useRemoveFromWishlist } from '@/lib/db/wishlist';
-import { Colors, FontFamily, Spacing, Radius } from '@/constants/theme';
+import { fmt } from '@/lib/format';
+import { TONE_PAIRS } from '@/lib/binder-tones';
+import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 import { Card, CardVariants, cardBaseName, cardNameVariant } from '@/types';
-
-const TONE_PAIRS: [string, string][] = [
-  ['#1F0E3A', '#7A6BFF'],
-  ['#3A0E0E', '#FF7A3A'],
-  ['#0E1F3A', '#5FD2FF'],
-  ['#0E2F1F', '#9CFF6E'],
-  ['#3A2A0E', '#FFE03A'],
-  ['#1F0E2A', '#FF7AE0'],
-];
-
-function fmt(n: number) {
-  if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
-  return n.toFixed(2);
-}
 
 // Compact notation for matrix cells where horizontal space is tight.
 // $42 / $245 / $1.2k / $42k
@@ -433,9 +421,6 @@ export default function CardDetailScreen() {
             >
               <Icon name="heart" size={18} color={isWishlisted ? Colors.gold : Colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.navBtn}>
-              <Icon name="send" size={18} color={Colors.text} />
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -645,14 +630,6 @@ export default function CardDetailScreen() {
           >
             <Text style={styles.ctaPrimaryText}>Add to binder</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.ctaIcon}
-            onPress={() => router.push('/(tabs)/market')}
-            accessibilityLabel="Trade card"
-            accessibilityRole="button"
-          >
-            <Icon name="trade" size={16} color={Colors.text} />
-          </TouchableOpacity>
         </View>
       </ScrollView>
 
@@ -777,16 +754,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
-  navBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: Radius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
+  navBtn: NavButtonStyle,
   navBtnActive: {
     borderColor: 'rgba(255,215,0,0.4)',
     backgroundColor: 'rgba(255,215,0,0.1)',
@@ -795,14 +763,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
   },
   navBtnStandalone: {
-    width: 38,
-    height: 38,
-    borderRadius: Radius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    ...NavButtonStyle,
     alignSelf: 'flex-start',
   },
   loadingText: {
@@ -988,20 +949,6 @@ const styles = StyleSheet.create({
   changePct: {
     fontFamily: FontFamily.mono,
     fontSize: 14,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: Colors.line,
-    marginVertical: 14,
-  },
-  sourceRow: {
-    flexDirection: 'row',
-    gap: 20,
-  },
-  sourceValue: {
-    fontFamily: FontFamily.mono,
-    fontSize: 13,
-    color: Colors.text,
   },
   // Price mode segment
   modeSegmentWrap: {
@@ -1342,16 +1289,6 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
     color: '#0A0A0C',
-  },
-  ctaIcon: {
-    width: 50,
-    paddingVertical: 14,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   // Sheet
   backdrop: {

@@ -9,17 +9,9 @@ import { CardThumb } from '@/components/cards/CardThumb';
 import { Icon } from '@/components/ui/Icon';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { useBinders, useCreateBinder } from '@/lib/api/binders';
+import { TONE_PAIRS } from '@/lib/binder-tones';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
 import { Binder } from '@/types';
-
-const TONE_PAIRS: [string, string][] = [
-  ['#1F0E3A', '#7A6BFF'],
-  ['#3A0E0E', '#FF7A3A'],
-  ['#0E1F3A', '#5FD2FF'],
-  ['#0E2F1F', '#9CFF6E'],
-  ['#3A2A0E', '#FFE03A'],
-  ['#1F0E2A', '#FF7AE0'],
-];
 
 export default function BindersScreen() {
   const insets = useSafeAreaInsets();

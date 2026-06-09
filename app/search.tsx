@@ -8,6 +8,7 @@ import { SkeletonCard } from '@/components/ui/SkeletonCard';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { Icon } from '@/components/ui/Icon';
 import { useSearchCards, SortField, SortDir } from '@/lib/api/cards';
+import { fmt } from '@/lib/format';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 
 const FILTERS = ['Name', 'Set/Pack', 'Artist', 'Rarity'];
@@ -20,11 +21,6 @@ const SORT_OPTIONS: { field: SortField; dir: SortDir; label: string; icon: 'arro
   { field: 'number',  dir: 'asc',  label: 'Card #: Ascending', icon: 'arrow-up'   },
   { field: 'number',  dir: 'desc', label: 'Card #: Descending',icon: 'arrow-down' },
 ];
-
-function fmt(n: number) {
-  if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
-  return n.toFixed(2);
-}
 
 export default function SearchScreen() {
   const [query, setQuery] = useState('');

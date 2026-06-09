@@ -7,28 +7,10 @@ import { getDb } from '@/lib/db/database';
 import {
   addItemToCollection,
   createCollection,
-  deleteCollection,
 } from '@/lib/db/cloud-sync';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { PLACEHOLDER_CARD } from '@/lib/placeholder-card';
 import { Binder, Card } from '@/types';
-
-const PLACEHOLDER_CARD: Card = {
-  id: 'placeholder',
-  name: 'Empty Binder',
-  variant: '—',
-  set: 'POKEVAULT',
-  no: '—',
-  release: '—',
-  rarity: 'Common',
-  value: 0,
-  change: 0,
-  trend30d: null,
-  foil: false,
-  art: ['#1F0E3A', '#2D1B5E', '#1F0E3A'],
-  creature: '○',
-  types: ['dark'],
-  artist: '—',
-};
 
 interface BinderRow {
   id: string;
@@ -165,13 +147,3 @@ export function useAddCardToBinder() {
   };
 }
 
-export function useDeleteBinder() {
-  const queryClient = useQueryClient();
-  const { user } = useAuth();
-  return async (id: string): Promise<void> => {
-    if (!user) throw new Error('Sign in to delete binders.');
-    await deleteCollection(id);
-    queryClient.invalidateQueries({ queryKey: ['binders', user.id] });
-    queryClient.invalidateQueries({ queryKey: ['binder', user.id, id] });
-  };
-}

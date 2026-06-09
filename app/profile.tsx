@@ -12,7 +12,7 @@ import {
   useProfileCollections,
   useProfileStats,
 } from '@/lib/api/profiles';
-import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 
 export default function MyProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -135,7 +135,6 @@ export default function MyProfileScreen() {
                       {c.item_count} CARDS · {c.is_public ? 'PUBLIC' : 'PRIVATE'} · {c.kind.toUpperCase()}
                     </Text>
                   </View>
-                  <Icon name="chevron-right" size={14} color={Colors.text3} />
                 </View>
               ))}
             </View>
@@ -169,16 +168,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingBottom: 12,
   },
-  navBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: Radius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
+  navBtn: NavButtonStyle,
 
   hero: {
     alignItems: 'center',
