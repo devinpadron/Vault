@@ -1,7 +1,13 @@
 import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import { AppState } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { reconcileWithCloud } from '@/lib/db/cloud';
+import {
+  ensureDefaultCollections,
+  flushPendingOps,
+  pullCollectionsFromCloud,
+} from '@/lib/db/cloud-sync';
+import { prewarmFromLocalCollection } from '@/lib/api/sync-client';
 import { User } from '@/types';
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
@@ -79,10 +85,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const uid = session?.user.id;
       if (uid && !reconciledUsers.current.has(uid)) {
         reconciledUsers.current.add(uid);
-        // Local ↔ cloud reconcile in the background. Failures are logged inside.
-        reconcileWithCloud(uid).catch(err =>
-          console.warn('[auth] cloud reconcile failed:', err),
-        );
+        // Cloud is the authoritative source of truth for collections / binders
+        // / wishlist. Pull replaces the SQLite mirror, ensures default rows
+        // exist for new accounts, drains any queue left over from a previous
+        // session, then prewarms pricing. All fire-and-forget.
+        (async () => {
+          try {
+            await pullCollectionsFromCloud(uid);
+            await ensureDefaultCollections(uid);
+            await flushPendingOps();
+            await prewarmFromLocalCollection();
+          } catch (err) {
+            console.warn('[auth] post-signin background work failed:', err);
+          }
+        })();
       }
     }
 
@@ -92,9 +108,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       applySession(session);
     });
 
+    // Drain the offline write queue whenever the app comes back to the
+    // foreground, plus on a 30s heartbeat so a long-lived foreground session
+    // also catches up after a connectivity blip. Both are no-ops when the
+    // queue is empty or a flush is already in flight (cloud-sync dedups).
+    const onAppState = AppState.addEventListener('change', state => {
+      if (state === 'active') flushPendingOps().catch(() => {});
+    });
+    const interval = setInterval(() => {
+      flushPendingOps().catch(() => {});
+    }, 30_000);
+
     return () => {
       mounted = false;
       sub.subscription.unsubscribe();
+      onAppState.remove();
+      clearInterval(interval);
     };
   }, []);
 

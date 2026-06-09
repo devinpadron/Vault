@@ -139,8 +139,11 @@ export interface NewsItem {
   tag: string;
   when: string;
   title: string;
-  art: [string, string, string];
+  art: [string, string, string];   // gradient fallback when image_url is missing
   minutes: number;
+  url?: string;                    // article link; tap-through target
+  image_url?: string | null;       // when present the row renders this instead of the gradient
+  source?: string;
 }
 
 export interface User {

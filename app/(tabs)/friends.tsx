@@ -1,19 +1,19 @@
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Avatar } from '@/components/ui/Avatar';
+import { Icon } from '@/components/ui/Icon';
 import { SkeletonRow } from '@/components/ui/SkeletonRow';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
-import { useFriends } from '@/lib/api/friends';
+import { useFriends, useIncomingFriendRequests } from '@/lib/api/friends';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 import { Friend } from '@/types';
 
 export default function FriendsScreen() {
   const insets = useSafeAreaInsets();
   const { data: friends = [], isLoading, isError, refetch } = useFriends();
-  const onlineFriends = friends.filter(f => f.online);
+  const { data: requests = [] } = useIncomingFriendRequests();
 
   return (
     <ScrollView
@@ -21,57 +21,75 @@ export default function FriendsScreen() {
       contentContainerStyle={[styles.content, { paddingTop: insets.top + 16, paddingBottom: 100 }]}
       showsVerticalScrollIndicator={false}
     >
-      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.eyebrow}>
-          {friends.length} friends · {onlineFriends.length} online now
-        </Text>
-        <Text style={styles.title}>
-          The <Text style={styles.titleAccent}>circle</Text>
-        </Text>
+        <View style={styles.headerTop}>
+          <View>
+            <Text style={styles.eyebrow}>
+              {friends.length} {friends.length === 1 ? 'friend' : 'friends'}
+            </Text>
+            <Text style={styles.title}>
+              The <Text style={styles.titleAccent}>circle</Text>
+            </Text>
+          </View>
+          <View style={styles.actions}>
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={() => router.push('/friend-requests')}
+              accessibilityLabel="Friend requests"
+            >
+              <Icon name="bell" size={18} color={Colors.text} />
+              {requests.length > 0 && <View style={styles.badge} />}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={() => router.push('/friends-search')}
+              accessibilityLabel="Find friends"
+            >
+              <Icon name="search" size={18} color={Colors.text} />
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
 
       {isError && <ErrorPanel message="Failed to load friends" onRetry={refetch} />}
 
-      {/* Story row — online friends */}
-      {!isError && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.storyRow}
-          style={styles.storyScroll}
+      {!isError && requests.length > 0 && (
+        <TouchableOpacity
+          style={styles.requestsBanner}
+          onPress={() => router.push('/friend-requests')}
+          activeOpacity={0.9}
         >
-          {onlineFriends.map(friend => (
-            <TouchableOpacity
-              key={friend.id}
-              style={styles.storyItem}
-              onPress={() => router.push(`/friend/${friend.id}`)}
-              activeOpacity={0.8}
-            >
-              <LinearGradient
-                colors={['#FFD700', '#ff5fb6']}
-                start={{ x: 0.15, y: 0 }}
-                end={{ x: 0.85, y: 1 }}
-                style={styles.storyRingOuter}
-              >
-                <View style={styles.storyRingGap}>
-                  <Avatar colors={friend.avatar} size={50} />
-                </View>
-              </LinearGradient>
-              <Text style={styles.storyName}>{friend.name.split(' ')[0]}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+          <View style={styles.requestsBannerLeft}>
+            <Text style={styles.requestsBannerLabel}>NEW REQUESTS</Text>
+            <Text style={styles.requestsBannerText}>
+              {requests.length} pending friend {requests.length === 1 ? 'request' : 'requests'}
+            </Text>
+          </View>
+          <Icon name="chevron-right" size={16} color={Colors.gold} />
+        </TouchableOpacity>
       )}
 
-      {/* Full friend list */}
       <View style={styles.list}>
-        {isLoading
-          ? Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)
-          : friends.map((friend, index) => (
-              <FriendRow key={friend.id} friend={friend} index={index} />
-            ))
-        }
+        {isLoading ? (
+          Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)
+        ) : friends.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={styles.emptyTitle}>No friends yet</Text>
+            <Text style={styles.emptyText}>
+              Find collectors by username and send a request.
+            </Text>
+            <TouchableOpacity
+              style={styles.emptyBtn}
+              onPress={() => router.push('/friends-search')}
+            >
+              <Text style={styles.emptyBtnText}>FIND FRIENDS</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          friends.map((friend, index) => (
+            <FriendRow key={friend.id} friend={friend} index={index} />
+          ))
+        )}
       </View>
     </ScrollView>
   );
@@ -87,40 +105,30 @@ function FriendRow({ friend, index }: { friend: Friend; index: number }) {
         accessibilityRole="button"
         accessibilityLabel={`View ${friend.name}'s profile`}
       >
-        <Avatar colors={friend.avatar} size={48} online={friend.online} />
+        <Avatar colors={friend.avatar} size={48} />
 
         <View style={styles.rowInfo}>
           <Text style={styles.rowName}>{friend.name}</Text>
           <Text style={styles.rowMeta}>
-            {friend.handle.toUpperCase()} · {friend.binders} BINDERS
-          </Text>
-          <Text style={styles.rowRecent} numberOfLines={1}>
-            <Text style={styles.rowRecentLabel}>last added · </Text>
-            <Text style={styles.rowRecentCard}>{friend.recent}</Text>
+            {friend.handle.toUpperCase()} · {friend.binders} {friend.binders === 1 ? 'BINDER' : 'BINDERS'}
           </Text>
         </View>
 
-        <View style={styles.rowRight}>
-          <Text style={styles.rowValue}>${(friend.value / 1000).toFixed(1)}k</Text>
-          <TouchableOpacity style={styles.tradeBtn} accessibilityLabel={`Trade with ${friend.name}`}>
-            <Text style={styles.tradeBtnText}>TRADE</Text>
-          </TouchableOpacity>
-        </View>
+        <Icon name="chevron-right" size={14} color={Colors.text3} />
       </TouchableOpacity>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: Colors.bg,
-  },
-  content: {
-    paddingHorizontal: Spacing.xl,
-  },
-  header: {
-    marginBottom: 22,
+  screen: { flex: 1, backgroundColor: Colors.bg },
+  content: { paddingHorizontal: Spacing.xl },
+
+  header: { marginBottom: 22 },
+  headerTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
   },
   eyebrow: {
     fontFamily: FontFamily.mono,
@@ -136,41 +144,50 @@ const styles = StyleSheet.create({
     color: Colors.text,
     lineHeight: 40,
   },
-  titleAccent: {
-    fontFamily: FontFamily.displayItalic,
+  titleAccent: { fontFamily: FontFamily.displayItalic, color: Colors.gold },
+
+  actions: { flexDirection: 'row', gap: 8, paddingTop: 14 },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: Radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  badge: {
+    position: 'absolute',
+    top: 9,
+    right: 10,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.gold,
+  },
+
+  requestsBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 14,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255,215,0,0.3)',
+    backgroundColor: 'rgba(255,215,0,0.08)',
+    marginBottom: 16,
+  },
+  requestsBannerLeft: { gap: 4 },
+  requestsBannerLabel: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 1.6,
     color: Colors.gold,
   },
-  // Story row
-  storyScroll: {
-    marginHorizontal: -Spacing.xl,
-    marginBottom: 22,
-  },
-  storyRow: {
-    paddingHorizontal: Spacing.xl,
-    gap: 14,
-  },
-  storyItem: {
-    alignItems: 'center',
-    gap: 6,
-  },
-  storyRingOuter: {
-    padding: 2,
-    borderRadius: Radius.full,
-  },
-  storyRingGap: {
-    padding: 2,
-    backgroundColor: Colors.bg,
-    borderRadius: Radius.full,
-  },
-  storyName: {
-    fontFamily: FontFamily.body,
-    fontSize: 10,
-    color: Colors.text2,
-  },
-  // Friend list
-  list: {
-    gap: 10,
-  },
+  requestsBannerText: { fontFamily: FontFamily.body, fontSize: 14, color: Colors.text },
+
+  list: { gap: 10 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -181,15 +198,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
   },
-  rowInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  rowName: {
-    fontFamily: FontFamily.display,
-    fontSize: 16,
-    color: Colors.text,
-  },
+  rowInfo: { flex: 1, minWidth: 0 },
+  rowName: { fontFamily: FontFamily.display, fontSize: 16, color: Colors.text },
   rowMeta: {
     fontFamily: FontFamily.mono,
     fontSize: 10,
@@ -197,40 +207,22 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     marginTop: 2,
   },
-  rowRecent: {
-    marginTop: 6,
-  },
-  rowRecentLabel: {
+
+  empty: { alignItems: 'center', paddingVertical: 56, gap: 12 },
+  emptyTitle: { fontFamily: FontFamily.display, fontSize: 22, color: Colors.text },
+  emptyText: {
     fontFamily: FontFamily.body,
-    fontSize: 11,
-    color: Colors.text3,
-  },
-  rowRecentCard: {
-    fontFamily: FontFamily.displayItalic,
-    fontSize: 11,
-    color: Colors.text,
-  },
-  rowRight: {
-    alignItems: 'flex-end',
-    gap: 6,
-  },
-  rowValue: {
-    fontFamily: FontFamily.mono,
     fontSize: 13,
-    color: Colors.gold,
+    color: Colors.text3,
+    textAlign: 'center',
+    paddingHorizontal: Spacing.xl,
   },
-  tradeBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    backgroundColor: 'rgba(255,215,0,0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,215,0,0.3)',
+  emptyBtn: {
+    marginTop: 12,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
     borderRadius: Radius.full,
+    backgroundColor: Colors.gold,
   },
-  tradeBtnText: {
-    fontFamily: FontFamily.mono,
-    fontSize: 10,
-    color: Colors.gold,
-    letterSpacing: 1.5,
-  },
+  emptyBtnText: { fontFamily: FontFamily.mono, fontSize: 11, color: '#0A0A0C', letterSpacing: 1.5 },
 });

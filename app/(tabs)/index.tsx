@@ -1,4 +1,4 @@
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -7,6 +7,7 @@ import { Card3D } from '@/components/cards/Card3D';
 import { SkeletonCard } from '@/components/ui/SkeletonCard';
 import { Sparkline } from '@/components/charts/Sparkline';
 import { Icon } from '@/components/ui/Icon';
+import { Avatar } from '@/components/ui/Avatar';
 import { useFeaturedCard, usePortfolioHistory } from '@/lib/api/cards';
 import { useNews } from '@/lib/api/news';
 import { useAuth } from '@/lib/auth/AuthContext';
@@ -66,14 +67,15 @@ export default function HomeScreen() {
           >
             <Icon name="search" size={18} color={Colors.text} />
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.iconBtn}
-            onPress={() => router.push('/settings')}
-            accessibilityLabel="Open settings"
-            accessibilityRole="button"
-          >
-            <Icon name="settings" size={18} color={Colors.text} />
-          </TouchableOpacity>
+          {user && (
+            <TouchableOpacity
+              onPress={() => router.push('/profile')}
+              accessibilityLabel="Open profile"
+              accessibilityRole="button"
+            >
+              <Avatar colors={user.avatar} size={40} />
+            </TouchableOpacity>
+          )}
         </View>
       </Animated.View>
 
@@ -162,10 +164,18 @@ export default function HomeScreen() {
       <Animated.View entering={FadeInDown.delay(240).duration(340)}>
         <View style={[styles.sectionHeader, { marginTop: 28 }]}>
           <Text style={styles.displayTitle}>The Brief</Text>
-          <Text style={[styles.mono, { fontSize: 10, color: Colors.text3, letterSpacing: 1.6 }]}>VIEW ALL →</Text>
+          <TouchableOpacity
+            onPress={() => router.push('/news')}
+            accessibilityRole="button"
+            accessibilityLabel="View all news"
+          >
+            <Text style={[styles.mono, { fontSize: 10, color: Colors.gold, letterSpacing: 1.6 }]}>
+              VIEW ALL →
+            </Text>
+          </TouchableOpacity>
         </View>
         <View style={styles.newsList}>
-          {news.map(item => (
+          {news.slice(0, 5).map(item => (
             <NewsRow key={item.id} item={item} />
           ))}
         </View>
@@ -175,9 +185,20 @@ export default function HomeScreen() {
 }
 
 function NewsRow({ item }: { item: NewsItem }) {
+  const onPress = () => {
+    if (item.url) Linking.openURL(item.url).catch(() => {});
+  };
   return (
-    <View style={styles.newsItem}>
+    <TouchableOpacity
+      style={styles.newsItem}
+      onPress={onPress}
+      activeOpacity={item.url ? 0.85 : 1}
+      accessibilityRole={item.url ? 'link' : undefined}
+      accessibilityLabel={item.title}
+    >
       <View style={styles.newsArt}>
+        {/* Gradient stays as the base layer so it shows through if the image
+            fails to load or while it's loading. */}
         <LinearGradient
           colors={item.art}
           locations={[0, 0.5, 1]}
@@ -185,12 +206,20 @@ function NewsRow({ item }: { item: NewsItem }) {
           end={{ x: 0.5, y: 1 }}
           style={StyleSheet.absoluteFill}
         />
-        <LinearGradient
-          colors={['rgba(255,255,255,0.4)', 'transparent']}
-          start={{ x: 0.5, y: 0 }}
-          end={{ x: 0.5, y: 0.5 }}
-          style={StyleSheet.absoluteFill}
-        />
+        {item.image_url ? (
+          <Image
+            source={{ uri: item.image_url }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+          />
+        ) : (
+          <LinearGradient
+            colors={['rgba(255,255,255,0.4)', 'transparent']}
+            start={{ x: 0.5, y: 0 }}
+            end={{ x: 0.5, y: 0.5 }}
+            style={StyleSheet.absoluteFill}
+          />
+        )}
       </View>
       <View style={styles.newsMeta}>
         <View style={styles.newsTagRow}>
@@ -198,12 +227,12 @@ function NewsRow({ item }: { item: NewsItem }) {
           <View style={styles.dot} />
           <Text style={[styles.mono, { fontSize: 9, color: Colors.text3, letterSpacing: 1 }]}>{item.when}</Text>
         </View>
-        <Text style={styles.newsTitle}>{item.title}</Text>
+        <Text style={styles.newsTitle} numberOfLines={3}>{item.title}</Text>
         <Text style={[styles.mono, { fontSize: 10, color: Colors.text3, marginTop: 6, letterSpacing: 1 }]}>
           {item.minutes} MIN READ
         </Text>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 

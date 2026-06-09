@@ -60,7 +60,7 @@ export async function syncHistory(
   await Promise.all(
     cardIds.map(async cardId => {
       try {
-        const resp = await scrydex.getCardPriceHistory(cardId, days);
+        const resp = await scrydex.getCardPriceHistory(cardId, { days });
         const entries: ScrydexPriceHistoryEntry[] = resp.data ?? [];
 
         for (const entry of entries) {

@@ -229,18 +229,26 @@ export class ScrydexClient {
 
   // GET /cards/{id} — returns ScrydexCardFull. Use when the list endpoint's
   // brief shape is missing abilities/attacks/etc.
-  async getCard(cardId: string): Promise<ScrydexCardFull> {
-    return this.get<ScrydexCardFull>(`/cards/${cardId}`, { casing: 'snake' });
+  async getCard(cardId: string, includePrices = false): Promise<ScrydexCardFull> {
+    const params: Record<string, string> = { casing: 'snake' };
+    if (includePrices) params.include = 'prices';
+    return this.get<ScrydexCardFull>(`/cards/${cardId}`, params);
   }
 
+  // GET /cards/{id}/price_history.
+  // Pass `startDate` to fetch all snapshots from that date forward — leave
+  // both `days` and `startDate` undefined to let Scrydex apply its default.
+  // For a "full history" backfill, pass startDate well before any modern
+  // print run (e.g. '2010-01-01').
   async getCardPriceHistory(
     cardId: string,
-    days = 2,
+    opts: { days?: number; startDate?: string; endDate?: string } = {},
   ): Promise<ScrydexPriceHistoryResponse> {
-    return this.get(`/cards/${cardId}/price_history`, {
-      days: String(days),
-      casing: 'snake',
-    });
+    const params: Record<string, string> = { casing: 'snake' };
+    if (opts.days       != null) params.days       = String(opts.days);
+    if (opts.startDate)          params.start_date = opts.startDate;
+    if (opts.endDate)            params.end_date   = opts.endDate;
+    return this.get(`/cards/${cardId}/price_history`, params);
   }
 
   // GET /cards/{id}/listings — sold-listing snapshots from eBay et al.

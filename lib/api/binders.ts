@@ -1,5 +1,15 @@
+// Binders API. Each binder is a row in `cloud_collections` with kind='binder';
+// its cards live in `cloud_collection_items`. The cloud-sync engine
+// (lib/db/cloud-sync.ts) handles the optimistic write + offline queue.
+
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getDb } from '../db/database';
+import { getDb } from '@/lib/db/database';
+import {
+  addItemToCollection,
+  createCollection,
+  deleteCollection,
+} from '@/lib/db/cloud-sync';
+import { useAuth } from '@/lib/auth/AuthContext';
 import { Binder, Card } from '@/types';
 
 const PLACEHOLDER_CARD: Card = {
@@ -23,71 +33,82 @@ const PLACEHOLDER_CARD: Card = {
 interface BinderRow {
   id: string;
   name: string;
-  subtitle: string;
-  tone_start: string;
-  tone_end: string;
+  description: string | null;
+  tone_start: string | null;
+  tone_end: string | null;
   created_at: number;
 }
 
+function hydrateBinder(row: BinderRow, cover: Card, count: number): Binder {
+  return {
+    id:       row.id,
+    name:     row.name,
+    subtitle: row.description ?? '',
+    count,
+    cover,
+    tone:     [row.tone_start ?? '#1F0E3A', row.tone_end ?? '#7A6BFF'],
+  };
+}
+
 export function useBinders() {
+  const { user } = useAuth();
   return useQuery<Binder[]>({
-    queryKey: ['binders'],
+    queryKey: ['binders', user?.id],
     queryFn: async () => {
+      if (!user) return [];
       const db = await getDb();
       const rows = await db.getAllAsync<BinderRow>(
-        'SELECT * FROM binders ORDER BY created_at DESC'
+        `SELECT id, name, description, tone_start, tone_end, created_at
+           FROM cloud_collections
+          WHERE user_id = ? AND kind = 'binder'
+          ORDER BY created_at DESC`,
+        [user.id],
       );
-      const binders = await Promise.all(rows.map(async row => {
+      return Promise.all(rows.map(async row => {
         const coverRow = await db.getFirstAsync<{ card_json: string }>(
-          'SELECT card_json FROM binder_cards WHERE binder_id = ? AND position = 0',
-          [row.id]
+          `SELECT card_json FROM cloud_collection_items
+            WHERE collection_id = ?
+            ORDER BY position ASC LIMIT 1`,
+          [row.id],
         );
         const countRow = await db.getFirstAsync<{ count: number }>(
-          'SELECT COUNT(*) as count FROM binder_cards WHERE binder_id = ?',
-          [row.id]
+          `SELECT COUNT(*) as count FROM cloud_collection_items WHERE collection_id = ?`,
+          [row.id],
         );
         const cover = coverRow ? JSON.parse(coverRow.card_json) as Card : PLACEHOLDER_CARD;
-        return {
-          id: row.id,
-          name: row.name,
-          subtitle: row.subtitle,
-          count: countRow?.count ?? 0,
-          cover,
-          tone: [row.tone_start, row.tone_end] as [string, string],
-        };
+        return hydrateBinder(row, cover, countRow?.count ?? 0);
       }));
-      return binders;
     },
   });
 }
 
 export function useBinder(id: string) {
+  const { user } = useAuth();
   return useQuery<Binder | null>({
-    queryKey: ['binder', id],
+    queryKey: ['binder', user?.id, id],
     queryFn: async () => {
+      if (!user) return null;
       const db = await getDb();
       const row = await db.getFirstAsync<BinderRow>(
-        'SELECT * FROM binders WHERE id = ?',
-        [id]
+        `SELECT id, name, description, tone_start, tone_end, created_at
+           FROM cloud_collections
+          WHERE id = ? AND user_id = ? AND kind = 'binder'`,
+        [id, user.id],
       );
       if (!row) return null;
+
       const coverRow = await db.getFirstAsync<{ card_json: string }>(
-        'SELECT card_json FROM binder_cards WHERE binder_id = ? AND position = 0',
-        [id]
+        `SELECT card_json FROM cloud_collection_items
+          WHERE collection_id = ?
+          ORDER BY position ASC LIMIT 1`,
+        [id],
       );
       const countRow = await db.getFirstAsync<{ count: number }>(
-        'SELECT COUNT(*) as count FROM binder_cards WHERE binder_id = ?',
-        [id]
+        `SELECT COUNT(*) as count FROM cloud_collection_items WHERE collection_id = ?`,
+        [id],
       );
       const cover = coverRow ? JSON.parse(coverRow.card_json) as Card : PLACEHOLDER_CARD;
-      return {
-        id: row.id,
-        name: row.name,
-        subtitle: row.subtitle,
-        count: countRow?.count ?? 0,
-        cover,
-        tone: [row.tone_start, row.tone_end] as [string, string],
-      };
+      return hydrateBinder(row, cover, countRow?.count ?? 0);
     },
     enabled: !!id,
   });
@@ -99,8 +120,9 @@ export function useBinderCards(binderId: string) {
     queryFn: async () => {
       const db = await getDb();
       const rows = await db.getAllAsync<{ card_json: string }>(
-        'SELECT card_json FROM binder_cards WHERE binder_id = ? ORDER BY position',
-        [binderId]
+        `SELECT card_json FROM cloud_collection_items
+          WHERE collection_id = ? ORDER BY position ASC`,
+        [binderId],
       );
       return rows.map(r => JSON.parse(r.card_json) as Card);
     },
@@ -110,48 +132,46 @@ export function useBinderCards(binderId: string) {
 
 export function useCreateBinder() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   return async (name: string, toneStart: string, toneEnd: string): Promise<void> => {
-    const db = await getDb();
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
-    await db.runAsync(
-      'INSERT INTO binders (id, name, subtitle, tone_start, tone_end, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-      [id, name, '', toneStart, toneEnd, Date.now()]
-    );
-    queryClient.invalidateQueries({ queryKey: ['binders'] });
+    if (!user) throw new Error('Sign in to create binders.');
+    await createCollection({
+      userId:    user.id,
+      kind:      'binder',
+      name,
+      toneStart,
+      toneEnd,
+    });
+    queryClient.invalidateQueries({ queryKey: ['binders', user.id] });
   };
 }
 
 export function useAddCardToBinder() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   return async (binderId: string, card: Card): Promise<void> => {
+    if (!user) throw new Error('Sign in to add cards.');
+    // Find current max position so the new card lands at the end.
     const db = await getDb();
-    const existing = await db.getFirstAsync<{ id: string }>(
-      'SELECT id FROM binder_cards WHERE binder_id = ? AND card_id = ?',
-      [binderId, card.id]
-    );
-    if (existing) return;
     const maxRow = await db.getFirstAsync<{ max_pos: number | null }>(
-      'SELECT MAX(position) as max_pos FROM binder_cards WHERE binder_id = ?',
-      [binderId]
+      `SELECT MAX(position) as max_pos FROM cloud_collection_items WHERE collection_id = ?`,
+      [binderId],
     );
     const position = (maxRow?.max_pos ?? -1) + 1;
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
-    await db.runAsync(
-      'INSERT INTO binder_cards (id, binder_id, card_id, card_json, position) VALUES (?, ?, ?, ?, ?)',
-      [id, binderId, card.id, JSON.stringify(card), position]
-    );
+    await addItemToCollection(binderId, card, position);
     queryClient.invalidateQueries({ queryKey: ['binder-cards', binderId] });
-    queryClient.invalidateQueries({ queryKey: ['binder', binderId] });
-    queryClient.invalidateQueries({ queryKey: ['binders'] });
+    queryClient.invalidateQueries({ queryKey: ['binder', user.id, binderId] });
+    queryClient.invalidateQueries({ queryKey: ['binders', user.id] });
   };
 }
 
 export function useDeleteBinder() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   return async (id: string): Promise<void> => {
-    const db = await getDb();
-    await db.runAsync('DELETE FROM binders WHERE id = ?', [id]);
-    await db.runAsync('DELETE FROM binder_cards WHERE binder_id = ?', [id]);
-    queryClient.invalidateQueries({ queryKey: ['binders'] });
+    if (!user) throw new Error('Sign in to delete binders.');
+    await deleteCollection(id);
+    queryClient.invalidateQueries({ queryKey: ['binders', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['binder', user.id, id] });
   };
 }

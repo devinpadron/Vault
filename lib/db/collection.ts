@@ -1,30 +1,66 @@
+// Collection hooks. Reads come from the cloud_collection_items mirror;
+// mutations enqueue ops to the offline queue, which flushes them to Supabase.
+// See lib/db/cloud-sync.ts for the sync engine.
+
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getDb } from './database';
-import { cloudAddItem, cloudRemoveItem } from './cloud';
+import {
+  addItemToCollection,
+  getOrCreateDefaultCollection,
+  removeItemFromCollectionByCard,
+} from './cloud-sync';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { Card } from '@/types';
+import { CollectionEntry } from '@/lib/filters/collection';
 
-export function useCollectionCards() {
-  return useQuery<Card[]>({
-    queryKey: ['collection'],
+// Returns the user's main-collection items paired with their added_at
+// timestamp — needed for "Recently added" / "Oldest first" sort options.
+// Prefer this in the collection screen; thin wrappers below cover the
+// callers that just need Card[].
+export function useCollectionEntries() {
+  const { user } = useAuth();
+  return useQuery<CollectionEntry[]>({
+    queryKey: ['collection-entries', user?.id],
     queryFn: async () => {
+      if (!user) return [];
       const db = await getDb();
-      const rows = await db.getAllAsync<{ card_json: string }>(
-        'SELECT card_json FROM collection_cards ORDER BY added_at DESC',
+      const rows = await db.getAllAsync<{ card_json: string; added_at: number }>(
+        `SELECT i.card_json, i.added_at
+           FROM cloud_collection_items i
+           JOIN cloud_collections c ON c.id = i.collection_id
+          WHERE c.user_id = ? AND c.kind = 'collection'
+          ORDER BY i.added_at DESC`,
+        [user.id],
       );
-      return rows.map(r => JSON.parse(r.card_json) as Card);
+      return rows.map(r => ({
+        card:     JSON.parse(r.card_json) as Card,
+        added_at: r.added_at,
+      }));
     },
   });
 }
 
+export function useCollectionCards() {
+  const q = useCollectionEntries();
+  return {
+    ...q,
+    data: (q.data ?? []).map(e => e.card),
+  };
+}
+
 export function useIsInCollection(cardId: string) {
+  const { user } = useAuth();
   return useQuery<boolean>({
-    queryKey: ['in-collection', cardId],
+    queryKey: ['in-collection', user?.id, cardId],
     queryFn: async () => {
+      if (!user) return false;
       const db = await getDb();
       const row = await db.getFirstAsync<{ id: string }>(
-        'SELECT id FROM collection_cards WHERE card_id = ?',
-        [cardId],
+        `SELECT i.id
+           FROM cloud_collection_items i
+           JOIN cloud_collections c ON c.id = i.collection_id
+          WHERE c.user_id = ? AND c.kind = 'collection' AND i.card_id = ?`,
+        [user.id, cardId],
       );
       return row !== null;
     },
@@ -36,16 +72,11 @@ export function useAddToCollection() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   return async (card: Card): Promise<void> => {
-    const db = await getDb();
-    const id = Date.now().toString(36);
-    await db.runAsync(
-      'INSERT OR IGNORE INTO collection_cards (id, card_id, card_json, added_at) VALUES (?, ?, ?, ?)',
-      [id, card.id, JSON.stringify(card), Date.now()],
-    );
-    // Fire-and-forget cloud mirror — failures don't block UX.
-    if (user) cloudAddItem(user.id, 'collection', card.id).catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ['collection'] });
-    queryClient.invalidateQueries({ queryKey: ['in-collection', card.id] });
+    if (!user) throw new Error('Sign in to save cards.');
+    const collectionId = await getOrCreateDefaultCollection(user.id, 'collection', 'Main');
+    await addItemToCollection(collectionId, card);
+    queryClient.invalidateQueries({ queryKey: ['collection', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, card.id] });
   };
 }
 
@@ -53,10 +84,10 @@ export function useRemoveFromCollection() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   return async (cardId: string): Promise<void> => {
-    const db = await getDb();
-    await db.runAsync('DELETE FROM collection_cards WHERE card_id = ?', [cardId]);
-    if (user) cloudRemoveItem(user.id, 'collection', cardId).catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ['collection'] });
-    queryClient.invalidateQueries({ queryKey: ['in-collection', cardId] });
+    if (!user) throw new Error('Sign in to manage your collection.');
+    const collectionId = await getOrCreateDefaultCollection(user.id, 'collection', 'Main');
+    await removeItemFromCollectionByCard(collectionId, cardId);
+    queryClient.invalidateQueries({ queryKey: ['collection', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, cardId] });
   };
 }

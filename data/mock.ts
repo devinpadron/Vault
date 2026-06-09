@@ -1,12 +1,9 @@
 import { AppData } from '@/types';
 
 // Master switch for mock-backed surfaces. Set to false once a real backend
-// exists for that data type. Currently no Scrydex endpoint covers news or
-// friends — they remain mocked behind this flag while the rest of the app
-// runs on Supabase data.
-//
-// TODO: when supabase/migrations/005_app_collections.sql is wired up
-// (profiles + friendships tables), drop friends mocks and use real queries.
+// exists for that data type. Currently no Scrydex endpoint covers news —
+// it remains mocked behind this flag while the rest of the app runs on
+// Supabase data. Friends are now sourced from Supabase (see lib/api/friends.ts).
 export const MOCK_DATA_ENABLED = true;
 
 const fire: [string, string, string] = ['#FF7A3A', '#C0291A', '#3A0E0E'];

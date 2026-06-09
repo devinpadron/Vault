@@ -1,4 +1,5 @@
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { getDb } from '@/lib/db/database';
 import {
@@ -8,6 +9,7 @@ import {
 import { Card as AppCard } from '@/types';
 import { SupabaseCardFull, CARD_SELECT, mapRow, FEATURED_RARITIES } from './types';
 import { getCardPricing, CardPricing, PricingQuery } from './pricing';
+import { refreshCardOnView } from './sync-client';
 
 const TABLE = 'cards';
 
@@ -245,6 +247,7 @@ export function useCardPricing(
   const cacheKey = card?.id
     ? pricingCacheKey(card.id, variantId, type, query.grader, query.grade)
     : '';
+  const queryClient = useQueryClient();
 
   const cached = useQuery<CardPricing | null>({
     queryKey: ['pricing-cache', cacheKey],
@@ -253,15 +256,17 @@ export function useCardPricing(
     enabled: !!cacheKey,
   });
 
+  const networkKey = [
+    'card-pricing',
+    card?.id,
+    variantId ?? null,
+    type,
+    query.grader ?? '',
+    query.grade ?? '',
+  ];
+
   const network = useQuery<CardPricing | null>({
-    queryKey: [
-      'card-pricing',
-      card?.id,
-      variantId ?? null,
-      type,
-      query.grader ?? '',
-      query.grade ?? '',
-    ],
+    queryKey: networkKey,
     queryFn: async () => {
       if (!card) return null;
       const pricing = await getCardPricing(card.id, variantId, query);
@@ -271,6 +276,29 @@ export function useCardPricing(
     staleTime: 1000 * 60 * 60 * 12,
     enabled: !!card?.id,
   });
+
+  // SWR refresh: while the network query is serving (possibly stale) DB
+  // rows to the UI, kick the edge function to refresh prices + append any
+  // missing history days. When it reports work was done, invalidate so the
+  // DB-backed query re-runs and the UI updates with the fresh numbers.
+  // Skipped for graded queries (their data lives in card_listings, not in
+  // the on-view refresh path).
+  useEffect(() => {
+    if (!card?.id || type !== 'raw') return;
+    let cancelled = false;
+    refreshCardOnView(card.id)
+      .then(r => {
+        if (cancelled) return;
+        if (r.refreshedPrices || r.appendedHistoryDays > 0) {
+          queryClient.invalidateQueries({ queryKey: networkKey });
+        }
+      })
+      .catch(err => {
+        if (__DEV__) console.warn('[pricing] on-view refresh failed:', err);
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card?.id, type]);
 
   return {
     ...network,

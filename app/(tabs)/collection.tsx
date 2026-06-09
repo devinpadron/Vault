@@ -1,17 +1,20 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Card3D } from '@/components/cards/Card3D';
 import { SkeletonCardCell } from '@/components/ui/SkeletonCard';
-import { FilterPills } from '@/components/ui/FilterPills';
 import { Icon } from '@/components/ui/Icon';
-import { useCollectionCards } from '@/lib/db/collection';
+import { ActiveFilterChips } from '@/components/ui/ActiveFilterChips';
+import { FilterSheet, FilterTriggerButton } from '@/components/ui/FilterSheet';
+import { useCollectionEntries } from '@/lib/db/collection';
+import {
+  CollectionFilters, EMPTY_FILTERS,
+  activeFilterCount, applyFilters,
+} from '@/lib/filters/collection';
 import { Colors, FontFamily, Spacing } from '@/constants/theme';
 import { Card, cardBaseName, cardNameVariant } from '@/types';
-
-const FILTERS = ['All', 'Foil', 'Set', 'Rarity', 'Value'];
 
 function fmt(n: number) {
   if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -48,7 +51,7 @@ function CardCell({ card, index }: { card: Card; index: number }) {
               )}
             </>
           ) : (
-            <Text style={[styles.price, { color: Colors.text3 }]}>—</Text>
+            <Text style={[styles.price, { color: Colors.text3 }]}>&mdash;</Text>
           )}
         </View>
       </View>
@@ -57,95 +60,128 @@ function CardCell({ card, index }: { card: Card; index: number }) {
 }
 
 export default function CollectionScreen() {
-  const [filter, setFilter] = useState('All');
+  const [filters, setFilters] = useState<CollectionFilters>(EMPTY_FILTERS);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const insets = useSafeAreaInsets();
-  const { data: allCards = [], isLoading } = useCollectionCards();
+  const { data: entries = [], isLoading } = useCollectionEntries();
 
-  const cards = allCards.filter((c: Card) => filter === 'Foil' ? c.foil : true);
+  const visible = useMemo(() => applyFilters(entries, filters), [entries, filters]);
+  const cards   = useMemo(() => visible.map(e => e.card), [visible]);
 
   const pairs: [Card, Card | null][] = [];
   for (let i = 0; i < cards.length; i += 2) {
     pairs.push([cards[i], cards[i + 1] ?? null]);
   }
 
+  const activeCount = activeFilterCount(filters);
+  const headerCount = isLoading
+    ? 'Loading…'
+    : activeCount > 0
+      ? `${cards.length} of ${entries.length} cards`
+      : `${entries.length} cards · ${new Set(entries.map(e => e.card.set)).size} sets`;
+
   return (
-    <FlatList
-      data={isLoading ? [] : pairs}
-      keyExtractor={(_, i) => String(i)}
-      style={styles.screen}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 16, paddingBottom: 100 }]}
-      showsVerticalScrollIndicator={false}
-      ListEmptyComponent={
-        !isLoading && cards.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>No cards yet</Text>
-            <Text style={styles.emptySubtitle}>
-              Search for cards and tap "Add to collection" to start building your vault.
-            </Text>
-          </View>
-        ) : null
-      }
-      ListHeaderComponent={
-        <>
-          <View style={styles.header}>
-            <View style={styles.headerText}>
-              <Text style={styles.eyebrow}>
-                {isLoading ? 'Loading…' : `${cards.length} cards · ${new Set(cards.map(c => c.set)).size} sets`}
+    <>
+      <FlatList
+        data={isLoading ? [] : pairs}
+        keyExtractor={(_, i) => String(i)}
+        style={styles.screen}
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + 16, paddingBottom: 100 }]}
+        showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          !isLoading && cards.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>
+                {entries.length === 0 ? 'No cards yet' : 'No matches'}
               </Text>
-              <Text style={styles.title}>
-                Your{' '}
-                <Text style={styles.titleAccent}>collection</Text>
+              <Text style={styles.emptySubtitle}>
+                {entries.length === 0
+                  ? 'Search for cards and tap "Add to collection" to start building your vault.'
+                  : 'No cards match these filters. Try clearing some.'}
               </Text>
+              {entries.length > 0 && (
+                <TouchableOpacity
+                  style={styles.emptyResetBtn}
+                  onPress={() => setFilters({
+                    ...EMPTY_FILTERS,
+                    sortMode: filters.sortMode,
+                    sortDir:  filters.sortDir,
+                  })}
+                >
+                  <Text style={styles.emptyResetText}>CLEAR FILTERS</Text>
+                </TouchableOpacity>
+              )}
             </View>
-            <View style={styles.headerActions}>
-              <TouchableOpacity
-                style={styles.bindersBtn}
-                onPress={() => router.push('/wishlist')}
-                accessibilityLabel="Open wishlist"
-              >
-                <Icon name="heart" size={18} color={Colors.text} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.bindersBtn}
-                onPress={() => router.push('/(tabs)/binders')}
-                accessibilityLabel="Open binders"
-              >
-                <Icon name="binders" size={18} color={Colors.text} />
-              </TouchableOpacity>
+          ) : null
+        }
+        ListHeaderComponent={
+          <>
+            <View style={styles.header}>
+              <View style={styles.headerText}>
+                <Text style={styles.eyebrow}>{headerCount}</Text>
+                <Text style={styles.title}>
+                  Your{' '}
+                  <Text style={styles.titleAccent}>collection</Text>
+                </Text>
+              </View>
+              <View style={styles.headerActions}>
+                <TouchableOpacity
+                  style={styles.bindersBtn}
+                  onPress={() => router.push('/wishlist')}
+                  accessibilityLabel="Open wishlist"
+                >
+                  <Icon name="heart" size={18} color={Colors.text} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.bindersBtn}
+                  onPress={() => router.push('/(tabs)/binders')}
+                  accessibilityLabel="Open binders"
+                >
+                  <Icon name="binders" size={18} color={Colors.text} />
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
 
-          <View style={styles.filterRow}>
-            <FilterPills options={FILTERS} value={filter} onChange={setFilter} />
-            <TouchableOpacity style={styles.sortBtn}>
-              <Icon name="sort" size={14} color={Colors.text} />
-              <Text style={styles.sortLabel}>Sort</Text>
-            </TouchableOpacity>
-          </View>
+            <View style={styles.filterRow}>
+              <FilterTriggerButton count={activeCount} onPress={() => setSheetOpen(true)} />
+            </View>
 
-          {isLoading && (
-            <>
-              {Array.from({ length: 6 }, (_, i) => (
-                <View key={i} style={styles.row}>
-                  <SkeletonCardCell width={158} />
-                  <SkeletonCardCell width={158} />
-                </View>
-              ))}
-            </>
-          )}
-        </>
-      }
-      renderItem={({ item: [left, right], index }) => (
-        <View style={styles.row}>
-          <CardCell card={left} index={index * 2} />
-          {right ? (
-            <CardCell card={right} index={index * 2 + 1} />
-          ) : (
-            <View style={styles.cellWrapper} />
-          )}
-        </View>
-      )}
-    />
+            {activeCount > 0 && (
+              <ActiveFilterChips filters={filters} onChange={setFilters} />
+            )}
+
+            {isLoading && (
+              <>
+                {Array.from({ length: 6 }, (_, i) => (
+                  <View key={i} style={styles.row}>
+                    <SkeletonCardCell width={158} />
+                    <SkeletonCardCell width={158} />
+                  </View>
+                ))}
+              </>
+            )}
+          </>
+        }
+        renderItem={({ item: [left, right], index }) => (
+          <View style={styles.row}>
+            <CardCell card={left} index={index * 2} />
+            {right ? (
+              <CardCell card={right} index={index * 2 + 1} />
+            ) : (
+              <View style={styles.cellWrapper} />
+            )}
+          </View>
+        )}
+      />
+
+      <FilterSheet
+        visible={sheetOpen}
+        entries={entries}
+        value={filters}
+        onApply={setFilters}
+        onClose={() => setSheetOpen(false)}
+      />
+    </>
   );
 }
 
@@ -163,9 +199,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 4,
   },
-  headerText: {
-    flex: 1,
-  },
+  headerText: { flex: 1 },
   headerActions: {
     flexDirection: 'row',
     gap: 8,
@@ -202,37 +236,19 @@ const styles = StyleSheet.create({
   filterRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: -Spacing.xl,
-    marginBottom: 18,
-  },
-  sortBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    marginRight: Spacing.xl,
-    flexShrink: 0,
-  },
-  sortLabel: {
-    fontFamily: FontFamily.body,
-    fontSize: 12,
-    color: Colors.text,
+    marginBottom: 6,
+    marginTop: 14,
   },
   emptyState: {
     alignItems: 'center',
     paddingVertical: 60,
     paddingHorizontal: 24,
+    gap: 10,
   },
   emptyTitle: {
     fontFamily: FontFamily.display,
     fontSize: 22,
     color: Colors.text3,
-    marginBottom: 10,
   },
   emptySubtitle: {
     fontFamily: FontFamily.body,
@@ -241,18 +257,28 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
+  emptyResetBtn: {
+    marginTop: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  emptyResetText: {
+    fontFamily: FontFamily.mono,
+    fontSize: 11,
+    letterSpacing: 1.5,
+    color: Colors.gold,
+  },
   row: {
     flexDirection: 'row',
     gap: 14,
     marginBottom: 14,
   },
-  cellWrapper: {
-    flex: 1,
-    gap: 8,
-  },
-  cellMeta: {
-    paddingLeft: 2,
-  },
+  cellWrapper: { flex: 1, gap: 8 },
+  cellMeta: { paddingLeft: 2 },
   cardName: {
     fontFamily: FontFamily.display,
     fontSize: 14,
@@ -282,10 +308,6 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     fontSize: 11,
     color: Colors.gold,
-  },
-  change: {
-    fontFamily: FontFamily.mono,
-    fontSize: 10,
   },
   trend: {
     fontFamily: FontFamily.mono,

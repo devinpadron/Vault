@@ -1,14 +1,18 @@
 // Sync Edge Function
 //
 // Phases:
-//   list-expansions  — returns all expansion IDs (for orchestrating metadata phase)
-//   metadata         — upserts one expansion's cards, images, variants, initial prices
-//   prices           — re-syncs card_prices_current for one page of cards
-//   history          — appends daily price snapshots for one page of card variants
-//   listings         — backfills card_listings from /cards/{id}/listings
+//   list-expansions      — returns all expansion IDs (for orchestrating metadata phase)
+//   metadata             — upserts one expansion's cards, images, variants, initial prices
+//   prices               — re-syncs card_prices_current for one page of cards
+//   history              — appends daily price snapshots for one page of card variants
+//   listings             — backfills card_listings from /cards/{id}/listings
+//   card-on-view         — lazy refresh: prices + history append for ONE card
+//   prewarm              — same as card-on-view, fanned out over many card ids
+//   cron-cards-refresh   — weekly orchestrator: re-syncs every stale expansion
+//   cron-news-refresh    — hourly: pulls all 5 news feeds, upserts news_items
 //
-// Every invocation logs a row to sync_log. Chain calls using the returned
-// nextPage / nextCardPage cursor until it is null.
+// Every invocation logs a row to sync_log. Chain page-based phases by
+// incrementing nextPage / nextCardPage until null.
 //
 // Environment variables (set via `supabase secrets set`):
 //   SCRYDEX_API_KEY      — Scrydex X-Api-Key
@@ -22,6 +26,10 @@ import { syncMetadata, listExpansionIds } from './phases/metadata.ts';
 import { syncPrices } from './phases/prices.ts';
 import { syncHistory } from './phases/history.ts';
 import { syncListings } from './phases/listings.ts';
+import { refreshCardOnView } from './phases/onview.ts';
+import { prewarmCards } from './phases/prewarm.ts';
+import { cronRefreshStaleCards } from './phases/cron-cards.ts';
+import { refreshNews } from './phases/news.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -128,6 +136,34 @@ Deno.serve(async (req: Request) => {
         days:     Number(body.days     ?? 90),
       });
       await finishLog('success', (result as { listingCount: number }).listingCount);
+
+    } else if (phase === 'card-on-view') {
+      if (!body.cardId) return json({ error: 'card-on-view requires cardId' }, 400);
+      result = await refreshCardOnView(supabase, scrydex, {
+        cardId: body.cardId as string,
+        force:  Boolean(body.force ?? false),
+      });
+      const r = result as { refreshedPrices: boolean; appendedHistoryDays: number };
+      await finishLog('success', (r.refreshedPrices ? 1 : 0) + r.appendedHistoryDays);
+
+    } else if (phase === 'prewarm') {
+      if (!Array.isArray(body.cardIds)) {
+        return json({ error: 'prewarm requires cardIds array' }, 400);
+      }
+      result = await prewarmCards(supabase, scrydex, {
+        cardIds:     body.cardIds as string[],
+        concurrency: Number(body.concurrency ?? 4),
+        force:       Boolean(body.force ?? false),
+      });
+      await finishLog('success', (result as { refreshed: number }).refreshed);
+
+    } else if (phase === 'cron-cards-refresh') {
+      result = await cronRefreshStaleCards(supabase, scrydex);
+      await finishLog('success', (result as { cardsUpserted: number }).cardsUpserted);
+
+    } else if (phase === 'cron-news-refresh') {
+      result = await refreshNews(supabase);
+      await finishLog('success', (result as { totalInserted: number }).totalInserted);
 
     } else {
       return json({ error: `Unknown phase: ${phase}` }, 400);
