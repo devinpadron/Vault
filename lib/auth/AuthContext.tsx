@@ -1,11 +1,14 @@
 import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { AppState } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import {
   ensureDefaultCollections,
   flushPendingOps,
   pullCollectionsFromCloud,
+  wipeIfForeignUserData,
+  wipeLocalUserData,
 } from '@/lib/db/cloud-sync';
 import { prewarmFromLocalCollection } from '@/lib/api/sync-client';
 import { avatarFor } from '@/lib/avatar';
@@ -75,10 +78,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Distinguishes manual logout (sets the flag) from a Supabase-driven
   // sign-out (token expiry / refresh failure / server-side revoke).
   const manualSignOut = useRef(false);
+  // Whether the previous applySession call saw an authenticated session —
+  // lets us detect the authenticated → unauthenticated transition outside
+  // the setState updater so the local wipe runs exactly once per sign-out.
+  const wasAuthenticated = useRef(false);
+  const queryClient = useQueryClient();
 
   async function runPostSigninSync(uid: string) {
     setState(s => ({ ...s, mirrorSync: { state: 'pulling', error: null } }));
     try {
+      // If the device still holds another account's mirror (previous session
+      // ended without a clean sign-out), purge it before pulling.
+      await wipeIfForeignUserData(uid);
       await pullCollectionsFromCloud(uid);
       await ensureDefaultCollections(uid);
       await flushPendingOps();
@@ -102,6 +113,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     function applySession(session: Session | null) {
       if (!mounted) return;
+      const isAuthed = !!session;
+      if (wasAuthenticated.current && !isAuthed) {
+        // Sign-out (manual or expiry): purge per-user local state so the next
+        // account on this device can't read this user's mirror or flush their
+        // queued mutations under different credentials.
+        reconciledUsers.current.clear();
+        queryClient.clear();
+        wipeLocalUserData().catch(err => {
+          if (__DEV__) console.warn('[auth] local wipe on sign-out failed:', err);
+        });
+      }
+      wasAuthenticated.current = isAuthed;
       setState(prev => {
         const next: AuthStatus = session ? 'authenticated' : 'unauthenticated';
         let signedOutReason = prev.signedOutReason;

@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import { Avatar } from '@/components/ui/Avatar';
 import { Icon } from '@/components/ui/Icon';
+import { useMyProfile } from '@/lib/api/profiles';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useCollectionEntries, useAddToCollection, useUpdateCostBasis } from '@/lib/db/collection';
 import { shareCollectionCsv, pickCsvFile, parseCsvFile, resolveImportRows } from '@/lib/csv';
@@ -14,6 +15,7 @@ import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
+  const { data: profile } = useMyProfile();
   const version = Constants.expoConfig?.version ?? '—';
   const { data: entries = [] } = useCollectionEntries();
   const addToCollection = useAddToCollection();
@@ -112,7 +114,7 @@ export default function SettingsScreen() {
               style={styles.avatarRing}
             >
               <View style={styles.avatarGap}>
-                <Avatar colors={user.avatar} size={72} />
+                <Avatar colors={user.avatar} uri={profile?.avatar_url} size={72} />
               </View>
             </LinearGradient>
             <Text style={styles.name}>{user.name}</Text>

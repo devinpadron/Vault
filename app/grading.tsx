@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from 'react';
 import {
-  Alert, FlatList, Modal, StyleSheet, Text, TextInput,
+  Alert, FlatList, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput,
   TouchableOpacity, View,
 } from 'react-native';
 import { router } from 'expo-router';
@@ -218,100 +218,105 @@ export default function GradingScreen() {
         onRequestClose={closeNew}
         statusBarTranslucent
       >
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={closeNew} />
-        <View
-          style={[
-            styles.sheet,
-            { paddingBottom: insets.bottom + 16 },
-            pickStage && { maxHeight: '85%' },
-          ]}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <View style={styles.sheetGrabber} />
+          <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={closeNew} />
+          <View
+            style={[
+              styles.sheet,
+              { paddingBottom: insets.bottom + 16 },
+              pickStage && { maxHeight: '85%' },
+            ]}
+          >
+            <View style={styles.sheetGrabber} />
 
-          {pickStage ? (
-            <>
-              <TouchableOpacity
-                onPress={() => setPickStage(false)}
-                style={styles.backRow}
-                accessibilityRole="button"
-                accessibilityLabel="Back to submission form"
-              >
-                <Icon name="chevron-left" size={14} color={Colors.text3} />
-                <Text style={styles.backLabel}>BACK</Text>
-              </TouchableOpacity>
-              <Text style={styles.sheetEyebrow}>Pick a card</Text>
-              <Text style={styles.sheetTitle}>From your collection</Text>
-              {collectionCards.length === 0 ? (
-                <Text style={styles.sheetEmpty}>
-                  Your collection is empty. Add cards first.
-                </Text>
-              ) : (
-                <FlatList
-                  data={collectionCards}
-                  keyExtractor={c => c.id}
-                  keyboardShouldPersistTaps="handled"
-                  renderItem={({ item }) => (
+            {pickStage ? (
+              <>
+                <TouchableOpacity
+                  onPress={() => setPickStage(false)}
+                  style={styles.backRow}
+                  accessibilityRole="button"
+                  accessibilityLabel="Back to submission form"
+                >
+                  <Icon name="chevron-left" size={14} color={Colors.text3} />
+                  <Text style={styles.backLabel}>BACK</Text>
+                </TouchableOpacity>
+                <Text style={styles.sheetEyebrow}>Pick a card</Text>
+                <Text style={styles.sheetTitle}>From your collection</Text>
+                {collectionCards.length === 0 ? (
+                  <Text style={styles.sheetEmpty}>
+                    Your collection is empty. Add cards first.
+                  </Text>
+                ) : (
+                  <FlatList
+                    data={collectionCards}
+                    keyExtractor={c => c.id}
+                    keyboardShouldPersistTaps="handled"
+                    renderItem={({ item }) => (
+                      <TouchableOpacity
+                        style={styles.pickerCardRow}
+                        onPress={() => {
+                          setSelCard(item);
+                          setPickStage(false);
+                        }}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.pickerCardName} numberOfLines={1}>{item.name}</Text>
+                          <Text style={styles.pickerCardSet} numberOfLines={1}>{item.set} · {item.no}</Text>
+                        </View>
+                        <Icon name="chevron-right" size={14} color={Colors.text3} />
+                      </TouchableOpacity>
+                    )}
+                  />
+                )}
+              </>
+            ) : (
+              <>
+                <Text style={styles.sheetEyebrow}>New submission</Text>
+                <Text style={styles.sheetTitle}>Log a graded card</Text>
+
+                <Text style={styles.fieldLabel}>CARD</Text>
+                <TouchableOpacity style={styles.pickerRow} onPress={() => setPickStage(true)}>
+                  <Text style={[styles.pickerValue, !selCard && { color: Colors.text3 }]} numberOfLines={1}>
+                    {selCard ? selCard.name : 'Pick from your collection'}
+                  </Text>
+                  <Icon name="chevron-right" size={14} color={Colors.text3} />
+                </TouchableOpacity>
+
+                <Text style={styles.fieldLabel}>GRADER</Text>
+                <View style={styles.chipRow}>
+                  {GRADERS.map(g => (
                     <TouchableOpacity
-                      style={styles.pickerCardRow}
-                      onPress={() => {
-                        setSelCard(item);
-                        setPickStage(false);
-                      }}
+                      key={g}
+                      onPress={() => setGrader(g)}
+                      style={[styles.selectChip, grader === g && styles.selectChipActive]}
                     >
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.pickerCardName} numberOfLines={1}>{item.name}</Text>
-                        <Text style={styles.pickerCardSet} numberOfLines={1}>{item.set} · {item.no}</Text>
-                      </View>
-                      <Icon name="chevron-right" size={14} color={Colors.text3} />
+                      <Text style={[styles.selectChipText, grader === g && styles.selectChipTextActive]}>
+                        {g}
+                      </Text>
                     </TouchableOpacity>
-                  )}
+                  ))}
+                </View>
+
+                <Text style={styles.fieldLabel}>SUBMISSION ID (OPTIONAL)</Text>
+                <TextInput
+                  value={submissionIdInput}
+                  onChangeText={setSubmissionIdInput}
+                  placeholder="e.g. 78421006"
+                  placeholderTextColor={Colors.text3}
+                  style={styles.textInput}
+                  autoCapitalize="characters"
                 />
-              )}
-            </>
-          ) : (
-            <>
-              <Text style={styles.sheetEyebrow}>New submission</Text>
-              <Text style={styles.sheetTitle}>Log a graded card</Text>
 
-              <Text style={styles.fieldLabel}>CARD</Text>
-              <TouchableOpacity style={styles.pickerRow} onPress={() => setPickStage(true)}>
-                <Text style={[styles.pickerValue, !selCard && { color: Colors.text3 }]} numberOfLines={1}>
-                  {selCard ? selCard.name : 'Pick from your collection'}
-                </Text>
-                <Icon name="chevron-right" size={14} color={Colors.text3} />
-              </TouchableOpacity>
-
-              <Text style={styles.fieldLabel}>GRADER</Text>
-              <View style={styles.chipRow}>
-                {GRADERS.map(g => (
-                  <TouchableOpacity
-                    key={g}
-                    onPress={() => setGrader(g)}
-                    style={[styles.selectChip, grader === g && styles.selectChipActive]}
-                  >
-                    <Text style={[styles.selectChipText, grader === g && styles.selectChipTextActive]}>
-                      {g}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <Text style={styles.fieldLabel}>SUBMISSION ID (OPTIONAL)</Text>
-              <TextInput
-                value={submissionIdInput}
-                onChangeText={setSubmissionIdInput}
-                placeholder="e.g. 78421006"
-                placeholderTextColor={Colors.text3}
-                style={styles.textInput}
-                autoCapitalize="characters"
-              />
-
-              <TouchableOpacity style={styles.primaryBtn} onPress={commitNew}>
-                <Text style={styles.primaryBtnText}>Add to queue</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
+                <TouchableOpacity style={styles.primaryBtn} onPress={commitNew}>
+                  <Text style={styles.primaryBtnText}>Add to queue</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Edit / advance sheet */}
@@ -322,60 +327,65 @@ export default function GradingScreen() {
         onRequestClose={() => setEditTarget(null)}
         statusBarTranslucent
       >
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setEditTarget(null)} />
-        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={styles.sheetGrabber} />
-          {editTarget && (
-            <>
-              <Text style={styles.sheetEyebrow}>{editTarget.card_name}</Text>
-              <Text style={styles.sheetTitle}>Update status</Text>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setEditTarget(null)} />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={styles.sheetGrabber} />
+            {editTarget && (
+              <>
+                <Text style={styles.sheetEyebrow}>{editTarget.card_name}</Text>
+                <Text style={styles.sheetTitle}>Update status</Text>
 
-              <Text style={styles.fieldLabel}>STAGE</Text>
-              <View style={styles.chipRow}>
-                {GRADING_STAGES.map(s => (
-                  <TouchableOpacity
-                    key={s}
-                    onPress={() => setStage(s)}
-                    style={[styles.selectChip, stage === s && styles.selectChipActive]}
-                  >
-                    <Text style={[styles.selectChipText, stage === s && styles.selectChipTextActive]}>
-                      {STAGE_LABEL[s]}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+                <Text style={styles.fieldLabel}>STAGE</Text>
+                <View style={styles.chipRow}>
+                  {GRADING_STAGES.map(s => (
+                    <TouchableOpacity
+                      key={s}
+                      onPress={() => setStage(s)}
+                      style={[styles.selectChip, stage === s && styles.selectChipActive]}
+                    >
+                      <Text style={[styles.selectChipText, stage === s && styles.selectChipTextActive]}>
+                        {STAGE_LABEL[s]}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
 
-              <Text style={styles.fieldLabel}>RETURNED GRADE</Text>
-              <TextInput
-                value={returnedGrade}
-                onChangeText={setReturnedGrade}
-                placeholder="e.g. 10, 9.5"
-                placeholderTextColor={Colors.text3}
-                style={styles.textInput}
-              />
+                <Text style={styles.fieldLabel}>RETURNED GRADE</Text>
+                <TextInput
+                  value={returnedGrade}
+                  onChangeText={setReturnedGrade}
+                  placeholder="e.g. 10, 9.5"
+                  placeholderTextColor={Colors.text3}
+                  style={styles.textInput}
+                />
 
-              <Text style={styles.fieldLabel}>SUBMISSION ID</Text>
-              <TextInput
-                value={submissionIdInput}
-                onChangeText={setSubmissionIdInput}
-                placeholder="optional"
-                placeholderTextColor={Colors.text3}
-                style={styles.textInput}
-                autoCapitalize="characters"
-              />
+                <Text style={styles.fieldLabel}>SUBMISSION ID</Text>
+                <TextInput
+                  value={submissionIdInput}
+                  onChangeText={setSubmissionIdInput}
+                  placeholder="optional"
+                  placeholderTextColor={Colors.text3}
+                  style={styles.textInput}
+                  autoCapitalize="characters"
+                />
 
-              <TouchableOpacity style={styles.primaryBtn} onPress={commitEdit}>
-                <Text style={styles.primaryBtnText}>Save changes</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.dangerBtn}
-                onPress={() => editTarget && confirmDelete(editTarget)}
-              >
-                <Text style={styles.dangerBtnText}>Delete submission</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
+                <TouchableOpacity style={styles.primaryBtn} onPress={commitEdit}>
+                  <Text style={styles.primaryBtnText}>Save changes</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.dangerBtn}
+                  onPress={() => editTarget && confirmDelete(editTarget)}
+                >
+                  <Text style={styles.dangerBtnText}>Delete submission</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
     </View>
@@ -465,12 +475,10 @@ const styles = StyleSheet.create({
   },
   // ── Sheets ────────────────────────────────────────────────────────────
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    flex: 1,
     backgroundColor: 'rgba(0,0,0,0.55)',
   },
   sheet: {
-    position: 'absolute',
-    left: 0, right: 0, bottom: 0,
     backgroundColor: Colors.elevated,
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -11,10 +12,12 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Avatar } from '@/components/ui/Avatar';
 import { Icon } from '@/components/ui/Icon';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
-import { useMyProfile, useUpdateProfile } from '@/lib/api/profiles';
+import { avatarFor, useMyProfile, useSetAvatar, useUpdateProfile } from '@/lib/api/profiles';
 import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 
 const USERNAME_RE = /^[a-z0-9_]{3,24}$/;
@@ -23,6 +26,7 @@ export default function ProfileEditScreen() {
   const insets = useSafeAreaInsets();
   const { data: profile, isLoading, isError, error, refetch } = useMyProfile();
   const update = useUpdateProfile();
+  const setAvatar = useSetAvatar();
 
   const [username, setUsername]       = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -49,6 +53,39 @@ export default function ProfileEditScreen() {
       displayName !== (profile.display_name ?? '') ||
       bio !== (profile.bio ?? '')
     );
+
+  async function pickAvatar() {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    const asset = result.assets?.[0];
+    if (result.canceled || !asset) return;
+    try {
+      await setAvatar.mutateAsync({ uri: asset.uri, mimeType: asset.mimeType ?? undefined });
+    } catch (e) {
+      const msg = (e as { message?: string })?.message ?? 'Upload failed';
+      Alert.alert('Could not update photo', msg);
+    }
+  }
+
+  function removeAvatar() {
+    Alert.alert('Remove photo?', 'Your avatar will go back to the default gradient.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: () => {
+          setAvatar.mutateAsync(null).catch(e => {
+            const msg = (e as { message?: string })?.message ?? 'Failed to remove photo';
+            Alert.alert('Could not remove photo', msg);
+          });
+        },
+      },
+    ]);
+  }
 
   async function save() {
     if (usernameError) return;
@@ -123,6 +160,37 @@ export default function ProfileEditScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
+        <View style={styles.avatarBlock}>
+          <TouchableOpacity
+            onPress={pickAvatar}
+            disabled={setAvatar.isPending}
+            accessibilityRole="button"
+            accessibilityLabel="Change profile picture"
+            activeOpacity={0.85}
+          >
+            <Avatar colors={avatarFor(profile.id)} uri={profile.avatar_url} size={88} />
+            <View style={styles.avatarBadge}>
+              {setAvatar.isPending ? (
+                <ActivityIndicator size="small" color="#0A0A0C" />
+              ) : (
+                <Icon name="camera" size={14} color="#0A0A0C" />
+              )}
+            </View>
+          </TouchableOpacity>
+          {profile.avatar_url ? (
+            <TouchableOpacity
+              onPress={removeAvatar}
+              disabled={setAvatar.isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Remove profile picture"
+            >
+              <Text style={styles.avatarRemove}>REMOVE PHOTO</Text>
+            </TouchableOpacity>
+          ) : (
+            <Text style={styles.avatarHint}>TAP TO ADD A PHOTO</Text>
+          )}
+        </View>
+
         <Field label="Username">
           <View style={styles.inputRow}>
             <Text style={styles.inputPrefix}>@</Text>
@@ -221,6 +289,33 @@ const styles = StyleSheet.create({
     color: '#0A0A0C',
   },
   saveBtnTextDisabled: { color: 'rgba(10,10,12,0.5)' },
+
+  avatarBlock: { alignItems: 'center', gap: 12, marginBottom: 28, marginTop: 8 },
+  avatarBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 28,
+    height: 28,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.gold,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: Colors.bg,
+  },
+  avatarRemove: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    letterSpacing: 1.6,
+    color: Colors.down,
+  },
+  avatarHint: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    letterSpacing: 1.6,
+    color: Colors.text3,
+  },
 
   field: { marginBottom: 22 },
   fieldLabel: {

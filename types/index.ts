@@ -121,6 +121,7 @@ export interface Friend {
   name: string;
   handle: string;
   avatar: [string, string];
+  avatarUrl: string | null;   // uploaded profile picture; gradient fallback when null
   binders: number;
   recent: string;     // most-recently-added card name; shown on the friend profile
 }

@@ -7,6 +7,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Icon } from './Icon';
 import { Colors, FontFamily } from '@/constants/theme';
 
+// Height of the tab bar above the safe-area inset (wrapper paddingTop 12 +
+// row content ~50). Consumers add Math.max(insets.bottom, 8) to clear it.
+export const TAB_BAR_BASE_HEIGHT = 62;
+
 const TABS = [
   { name: 'index',      icon: 'home'   as const, label: 'Home' },
   { name: 'collection', icon: 'grid'   as const, label: 'Cards' },

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   Alert,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
@@ -721,91 +722,96 @@ export default function CardDetailScreen() {
         onRequestClose={closeSheet}
         statusBarTranslucent
       >
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={closeSheet} />
-        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={styles.sheetGrabber} />
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={closeSheet} />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={styles.sheetGrabber} />
 
-          {newBinderMode ? (
-            <>
-              <TouchableOpacity style={styles.backRow} onPress={() => setNewBinderMode(false)}>
-                <Icon name="chevron-left" size={14} color={Colors.text3} />
-                <Text style={styles.backLabel}>Back</Text>
-              </TouchableOpacity>
-              <Text style={styles.sheetEyebrow}>New binder</Text>
-              <Text style={styles.sheetTitle}>Name & color</Text>
-              <TextInput
-                style={styles.sheetInput}
-                placeholder="Binder name"
-                placeholderTextColor={Colors.text3}
-                value={newBinderName}
-                onChangeText={setNewBinderName}
-                autoFocus
-                returnKeyType="done"
-              />
-              <View style={styles.swatchRow}>
-                {TONE_PAIRS.map(([start, end]) => (
-                  <TouchableOpacity
-                    key={start}
-                    style={[styles.swatch, newBinderTone[0] === start && styles.swatchSelected]}
-                    onPress={() => setNewBinderTone([start, end])}
-                  >
-                    <LinearGradient
-                      colors={[start, end]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.swatchGradient}
-                    />
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <TouchableOpacity style={styles.createBtn} onPress={handleCreateBinder}>
-                <Text style={styles.createBtnText}>Create binder</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <>
-              <Text style={styles.sheetEyebrow}>Add to binder</Text>
-              <Text style={styles.sheetTitle}>Choose a destination</Text>
-              <View style={styles.sheetList}>
-                {binders.filter(b => !b.rules).map(b => (
-                  <TouchableOpacity
-                    key={b.id}
-                    style={styles.binderRow}
-                    onPress={async () => {
-                      await addCardToBinder(b.id, card);
-                      closeSheet();
-                      Alert.alert('Added', `${card.name} added to ${b.name}`);
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Add to ${b.name}`}
-                  >
-                    <LinearGradient
-                      colors={b.tone}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.binderThumb}
-                    />
-                    <View style={styles.binderInfo}>
-                      <Text style={styles.binderName}>{b.name}</Text>
-                      <Text style={styles.binderCount}>{b.count} CARDS</Text>
-                    </View>
-                    <Icon name="chevron-right" size={16} color={Colors.text3} />
-                  </TouchableOpacity>
-                ))}
-
-                <TouchableOpacity
-                  style={styles.newBinder}
-                  onPress={() => setNewBinderMode(true)}
-                  accessibilityRole="button"
-                  accessibilityLabel="Create new binder"
-                >
-                  <Icon name="plus" size={14} color={Colors.text2} />
-                  <Text style={styles.newBinderText}>New binder</Text>
+            {newBinderMode ? (
+              <>
+                <TouchableOpacity style={styles.backRow} onPress={() => setNewBinderMode(false)}>
+                  <Icon name="chevron-left" size={14} color={Colors.text3} />
+                  <Text style={styles.backLabel}>Back</Text>
                 </TouchableOpacity>
-              </View>
-            </>
-          )}
-        </View>
+                <Text style={styles.sheetEyebrow}>New binder</Text>
+                <Text style={styles.sheetTitle}>Name & color</Text>
+                <TextInput
+                  style={styles.sheetInput}
+                  placeholder="Binder name"
+                  placeholderTextColor={Colors.text3}
+                  value={newBinderName}
+                  onChangeText={setNewBinderName}
+                  autoFocus
+                  returnKeyType="done"
+                />
+                <View style={styles.swatchRow}>
+                  {TONE_PAIRS.map(([start, end]) => (
+                    <TouchableOpacity
+                      key={start}
+                      style={[styles.swatch, newBinderTone[0] === start && styles.swatchSelected]}
+                      onPress={() => setNewBinderTone([start, end])}
+                    >
+                      <LinearGradient
+                        colors={[start, end]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.swatchGradient}
+                      />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TouchableOpacity style={styles.createBtn} onPress={handleCreateBinder}>
+                  <Text style={styles.createBtnText}>Create binder</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={styles.sheetEyebrow}>Add to binder</Text>
+                <Text style={styles.sheetTitle}>Choose a destination</Text>
+                <View style={styles.sheetList}>
+                  {binders.filter(b => !b.rules).map(b => (
+                    <TouchableOpacity
+                      key={b.id}
+                      style={styles.binderRow}
+                      onPress={async () => {
+                        await addCardToBinder(b.id, card);
+                        closeSheet();
+                        Alert.alert('Added', `${card.name} added to ${b.name}`);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Add to ${b.name}`}
+                    >
+                      <LinearGradient
+                        colors={b.tone}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.binderThumb}
+                      />
+                      <View style={styles.binderInfo}>
+                        <Text style={styles.binderName}>{b.name}</Text>
+                        <Text style={styles.binderCount}>{b.count} CARDS</Text>
+                      </View>
+                      <Icon name="chevron-right" size={16} color={Colors.text3} />
+                    </TouchableOpacity>
+                  ))}
+
+                  <TouchableOpacity
+                    style={styles.newBinder}
+                    onPress={() => setNewBinderMode(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Create new binder"
+                  >
+                    <Icon name="plus" size={14} color={Colors.text2} />
+                    <Text style={styles.newBinderText}>New binder</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Cost basis editor */}
@@ -816,47 +822,52 @@ export default function CardDetailScreen() {
         onRequestClose={() => setCostBasisSheetOpen(false)}
         statusBarTranslucent
       >
-        <TouchableOpacity
-          style={styles.backdrop}
-          activeOpacity={1}
-          onPress={() => setCostBasisSheetOpen(false)}
-        />
-        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={styles.sheetGrabber} />
-          <Text style={styles.sheetEyebrow}>Cost basis</Text>
-          <Text style={styles.sheetTitle}>What did you pay?</Text>
-          <Text style={styles.basisHelper}>
-            Used to track unrealized and realized P/L. Leave blank to clear.
-          </Text>
-          <View style={styles.priceInputRow}>
-            <Text style={styles.priceInputDollar}>$</Text>
-            <TextInput
-              style={styles.priceInput}
-              placeholder="0.00"
-              placeholderTextColor={Colors.text3}
-              value={costBasisInput}
-              onChangeText={setCostBasisInput}
-              keyboardType="decimal-pad"
-              autoFocus
-              returnKeyType="done"
-            />
-          </View>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <TouchableOpacity
-            style={styles.createBtn}
-            onPress={async () => {
-              const trimmed = costBasisInput.trim();
-              const value = trimmed === '' ? null : Number(trimmed);
-              if (value != null && (!Number.isFinite(value) || value < 0)) {
-                Alert.alert('Invalid amount', 'Enter a positive dollar amount or leave blank.');
-                return;
-              }
-              await updateCostBasis(card.id, value, value != null ? Date.now() : null);
-              setCostBasisSheetOpen(false);
-            }}
-          >
-            <Text style={styles.createBtnText}>Save</Text>
-          </TouchableOpacity>
-        </View>
+            style={styles.backdrop}
+            activeOpacity={1}
+            onPress={() => setCostBasisSheetOpen(false)}
+          />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={styles.sheetGrabber} />
+            <Text style={styles.sheetEyebrow}>Cost basis</Text>
+            <Text style={styles.sheetTitle}>What did you pay?</Text>
+            <Text style={styles.basisHelper}>
+              Used to track unrealized and realized P/L. Leave blank to clear.
+            </Text>
+            <View style={styles.priceInputRow}>
+              <Text style={styles.priceInputDollar}>$</Text>
+              <TextInput
+                style={styles.priceInput}
+                placeholder="0.00"
+                placeholderTextColor={Colors.text3}
+                value={costBasisInput}
+                onChangeText={setCostBasisInput}
+                keyboardType="decimal-pad"
+                autoFocus
+                returnKeyType="done"
+              />
+            </View>
+            <TouchableOpacity
+              style={styles.createBtn}
+              onPress={async () => {
+                const trimmed = costBasisInput.trim();
+                const value = trimmed === '' ? null : Number(trimmed);
+                if (value != null && (!Number.isFinite(value) || value < 0)) {
+                  Alert.alert('Invalid amount', 'Enter a positive dollar amount or leave blank.');
+                  return;
+                }
+                await updateCostBasis(card.id, value, value != null ? Date.now() : null);
+                setCostBasisSheetOpen(false);
+              }}
+            >
+              <Text style={styles.createBtnText}>Save</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Sold vs just-removed prompt */}
@@ -867,85 +878,90 @@ export default function CardDetailScreen() {
         onRequestClose={() => setRemoveSheetOpen(false)}
         statusBarTranslucent
       >
-        <TouchableOpacity
-          style={styles.backdrop}
-          activeOpacity={1}
-          onPress={() => setRemoveSheetOpen(false)}
-        />
-        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={styles.sheetGrabber} />
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <TouchableOpacity
+            style={styles.backdrop}
+            activeOpacity={1}
+            onPress={() => setRemoveSheetOpen(false)}
+          />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={styles.sheetGrabber} />
 
-          {sellStage === 'choose' ? (
-            <>
-              <Text style={styles.sheetEyebrow}>Remove from collection</Text>
-              <Text style={styles.sheetTitle}>Did you sell it?</Text>
-              <Text style={styles.basisHelper}>
-                Recording a sale captures realized P/L. &ldquo;Just remove&rdquo; deletes
-                silently with no impact on your portfolio history.
-              </Text>
-              <TouchableOpacity
-                style={styles.removeOptionPrimary}
-                onPress={() => setSellStage('price')}
-                accessibilityRole="button"
-                accessibilityLabel="Mark as sold"
-              >
-                <Text style={styles.removeOptionPrimaryText}>Sold — record sale</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.removeOptionSecondary}
-                onPress={async () => {
-                  await removeFromCollection(card.id);
-                  setRemoveSheetOpen(false);
-                }}
-                accessibilityRole="button"
-                accessibilityLabel="Just remove"
-              >
-                <Text style={styles.removeOptionSecondaryText}>Just remove</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <>
-              <TouchableOpacity style={styles.backRow} onPress={() => setSellStage('choose')}>
-                <Icon name="chevron-left" size={14} color={Colors.text3} />
-                <Text style={styles.backLabel}>Back</Text>
-              </TouchableOpacity>
-              <Text style={styles.sheetEyebrow}>Record sale</Text>
-              <Text style={styles.sheetTitle}>Sale price</Text>
-              {costBasis != null && (
+            {sellStage === 'choose' ? (
+              <>
+                <Text style={styles.sheetEyebrow}>Remove from collection</Text>
+                <Text style={styles.sheetTitle}>Did you sell it?</Text>
                 <Text style={styles.basisHelper}>
-                  Cost basis on file: ${fmt(costBasis)}
+                  Recording a sale captures realized P/L. &ldquo;Just remove&rdquo; deletes
+                  silently with no impact on your portfolio history.
                 </Text>
-              )}
-              <View style={styles.priceInputRow}>
-                <Text style={styles.priceInputDollar}>$</Text>
-                <TextInput
-                  style={styles.priceInput}
-                  placeholder="0.00"
-                  placeholderTextColor={Colors.text3}
-                  value={salePriceInput}
-                  onChangeText={setSalePriceInput}
-                  keyboardType="decimal-pad"
-                  autoFocus
-                  returnKeyType="done"
-                />
-              </View>
-              <TouchableOpacity
-                style={styles.createBtn}
-                onPress={async () => {
-                  const value = Number(salePriceInput.trim());
-                  if (!Number.isFinite(value) || value < 0) {
-                    Alert.alert('Invalid amount', 'Enter the sale price in dollars.');
-                    return;
-                  }
-                  await sellCard(card, value);
-                  setRemoveSheetOpen(false);
-                }}
-              >
-                <Text style={styles.createBtnText}>Confirm sale</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
+                <TouchableOpacity
+                  style={styles.removeOptionPrimary}
+                  onPress={() => setSellStage('price')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Mark as sold"
+                >
+                  <Text style={styles.removeOptionPrimaryText}>Sold — record sale</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.removeOptionSecondary}
+                  onPress={async () => {
+                    await removeFromCollection(card.id);
+                    setRemoveSheetOpen(false);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Just remove"
+                >
+                  <Text style={styles.removeOptionSecondaryText}>Just remove</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity style={styles.backRow} onPress={() => setSellStage('choose')}>
+                  <Icon name="chevron-left" size={14} color={Colors.text3} />
+                  <Text style={styles.backLabel}>Back</Text>
+                </TouchableOpacity>
+                <Text style={styles.sheetEyebrow}>Record sale</Text>
+                <Text style={styles.sheetTitle}>Sale price</Text>
+                {costBasis != null && (
+                  <Text style={styles.basisHelper}>
+                    Cost basis on file: ${fmt(costBasis)}
+                  </Text>
+                )}
+                <View style={styles.priceInputRow}>
+                  <Text style={styles.priceInputDollar}>$</Text>
+                  <TextInput
+                    style={styles.priceInput}
+                    placeholder="0.00"
+                    placeholderTextColor={Colors.text3}
+                    value={salePriceInput}
+                    onChangeText={setSalePriceInput}
+                    keyboardType="decimal-pad"
+                    autoFocus
+                    returnKeyType="done"
+                  />
+                </View>
+                <TouchableOpacity
+                  style={styles.createBtn}
+                  onPress={async () => {
+                    const value = Number(salePriceInput.trim());
+                    if (!Number.isFinite(value) || value < 0) {
+                      Alert.alert('Invalid amount', 'Enter the sale price in dollars.');
+                      return;
+                    }
+                    await sellCard(card, value);
+                    setRemoveSheetOpen(false);
+                  }}
+                >
+                  <Text style={styles.createBtnText}>Confirm sale</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

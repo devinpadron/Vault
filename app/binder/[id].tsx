@@ -3,6 +3,7 @@ import {
   Alert,
   Dimensions,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
@@ -483,30 +484,35 @@ export default function BinderOpenScreen() {
         onRequestClose={() => setRenameOpen(false)}
         statusBarTranslucent
       >
-        <TouchableOpacity
-          style={styles.backdrop}
-          activeOpacity={1}
-          onPress={() => setRenameOpen(false)}
-        />
-        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={styles.sheetGrabber} />
-          <Text style={styles.sheetEyebrow}>RENAME</Text>
-          <Text style={styles.sheetTitle}>New binder name</Text>
-          <TextInput
-            style={styles.input}
-            value={renameValue}
-            onChangeText={setRenameValue}
-            placeholder="Binder name"
-            placeholderTextColor={Colors.text3}
-            autoFocus
-            returnKeyType="done"
-            onSubmitEditing={commitRename}
-            maxLength={48}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <TouchableOpacity
+            style={styles.backdrop}
+            activeOpacity={1}
+            onPress={() => setRenameOpen(false)}
           />
-          <TouchableOpacity style={styles.saveBtn} onPress={commitRename}>
-            <Text style={styles.saveBtnText}>Save</Text>
-          </TouchableOpacity>
-        </View>
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={styles.sheetGrabber} />
+            <Text style={styles.sheetEyebrow}>RENAME</Text>
+            <Text style={styles.sheetTitle}>New binder name</Text>
+            <TextInput
+              style={styles.input}
+              value={renameValue}
+              onChangeText={setRenameValue}
+              placeholder="Binder name"
+              placeholderTextColor={Colors.text3}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={commitRename}
+              maxLength={48}
+            />
+            <TouchableOpacity style={styles.saveBtn} onPress={commitRename}>
+              <Text style={styles.saveBtnText}>Save</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Smart-binder rules editor */}
@@ -517,42 +523,42 @@ export default function BinderOpenScreen() {
         onRequestClose={() => setRulesOpen(false)}
         statusBarTranslucent
       >
-        <TouchableOpacity
-          style={styles.backdrop}
-          activeOpacity={1}
-          onPress={() => setRulesOpen(false)}
-        />
-        <View style={[styles.rulesSheet, { paddingBottom: insets.bottom + 16, paddingTop: insets.top + 32 }]}>
-          <View style={styles.rulesSheetHeader}>
-            <TouchableOpacity onPress={() => setRulesOpen(false)} style={styles.navBtn}>
-              <Icon name="close" size={18} color={Colors.text} />
-            </TouchableOpacity>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.sheetEyebrow}>{isSmart ? 'EDIT RULES' : 'MAKE SMART'}</Text>
-              <Text style={styles.rulesSheetTitle}>{b.name}</Text>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={[styles.rulesSheet, { paddingBottom: insets.bottom + 16, paddingTop: insets.top + 32 }]}>
+            <View style={styles.rulesSheetHeader}>
+              <TouchableOpacity onPress={() => setRulesOpen(false)} style={styles.navBtn}>
+                <Icon name="close" size={18} color={Colors.text} />
+              </TouchableOpacity>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sheetEyebrow}>{isSmart ? 'EDIT RULES' : 'MAKE SMART'}</Text>
+                <Text style={styles.rulesSheetTitle}>{b.name}</Text>
+              </View>
+            </View>
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingHorizontal: Spacing.xl, paddingBottom: 32 }}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {draftRules && (
+                <SmartRulesEditor
+                  value={draftRules}
+                  onChange={setDraftRules}
+                  availableSets={ruleOptions.sets}
+                  availableRarities={ruleOptions.rarities}
+                />
+              )}
+            </ScrollView>
+            <View style={[styles.rulesSheetFooter, { paddingHorizontal: Spacing.xl }]}>
+              <TouchableOpacity style={styles.saveBtn} onPress={commitRules}>
+                <Text style={styles.saveBtnText}>Save rules</Text>
+              </TouchableOpacity>
             </View>
           </View>
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={{ paddingHorizontal: Spacing.xl, paddingBottom: 32 }}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-            {draftRules && (
-              <SmartRulesEditor
-                value={draftRules}
-                onChange={setDraftRules}
-                availableSets={ruleOptions.sets}
-                availableRarities={ruleOptions.rarities}
-              />
-            )}
-          </ScrollView>
-          <View style={[styles.rulesSheetFooter, { paddingHorizontal: Spacing.xl }]}>
-            <TouchableOpacity style={styles.saveBtn} onPress={commitRules}>
-              <Text style={styles.saveBtnText}>Save rules</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -745,8 +751,7 @@ const styles = StyleSheet.create({
   },
   // Smart-rules editor sheet — full height so the scroll list breathes.
   rulesSheet: {
-    position: 'absolute',
-    left: 0, right: 0, top: 0, bottom: 0,
+    flex: 1,
     backgroundColor: Colors.bg,
     flexDirection: 'column',
   },

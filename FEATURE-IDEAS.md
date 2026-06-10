@@ -68,11 +68,12 @@ something.
   cards.
 - **Smart binders** — auto-populating rules ("every Charizard," "every card
   from Base Set in NM"). Binders today are manual; smart binders are durable.
+  **✓ Shipped**
 - **CSV / TCGplayer / Collectr import & export** — the migration moat. Once a
   2,000-card collection is in Vault, churn drops near zero.
 - **Grading queue tracker** — log cards sent to PSA / CGC / BGS, stage
   (received, research, grading, shipped back), expected value lift on
-  completion. Niche but very engaged users.
+  completion. Niche but very engaged users. **✓ Shipped**
 
 ## Polish / quality of life
 

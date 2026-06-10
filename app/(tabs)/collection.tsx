@@ -17,7 +17,9 @@ import {
   useRemoveFromCollection,
 } from '@/lib/db/collection';
 import { useBinders, useAddCardToBinder } from '@/lib/api/binders';
+import { useFailedOpsCount, useRetryFailedOps, useDiscardFailedOps } from '@/lib/db/sync-status';
 import { VisibilityChip } from '@/components/ui/VisibilityChip';
+import { TAB_BAR_BASE_HEIGHT } from '@/components/ui/TabBar';
 import { useSetCompletion, SetCompletion } from '@/lib/db/sets';
 import {
   CollectionFilters, EMPTY_FILTERS,
@@ -147,7 +149,8 @@ function BulkActionBar({
     <View
       style={[
         styles.bulkBar,
-        { paddingBottom: Math.max(bottomInset, 12) },
+        // Float clear of the tab bar so the actions are never covered by it.
+        { bottom: TAB_BAR_BASE_HEIGHT + Math.max(bottomInset, 8) + 10 },
       ]}
     >
       <View style={styles.bulkBarInner}>
@@ -263,6 +266,24 @@ export default function CollectionScreen() {
   const addToBinder = useAddCardToBinder();
   const removeFromCollection = useRemoveFromCollection();
   const { mirrorSync, retryMirrorSync } = useAuth();
+  const { data: failedOps = 0 } = useFailedOpsCount();
+  const retryFailedOps = useRetryFailedOps();
+  const discardFailedOps = useDiscardFailedOps();
+
+  function confirmDiscardFailed() {
+    Alert.alert(
+      `Discard ${failedOps} unsynced change${failedOps === 1 ? '' : 's'}?`,
+      'These changes never reached the cloud. Discarding keeps them on this device only until the next sync overwrites them.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Discard',
+          style: 'destructive',
+          onPress: () => { discardFailedOps().catch(() => {}); },
+        },
+      ],
+    );
+  }
 
   // ── Bulk selection state ───────────────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -447,6 +468,33 @@ export default function CollectionScreen() {
                   accessibilityLabel="Retry sync"
                 >
                   <Text style={styles.syncBannerBtnText}>RETRY</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {failedOps > 0 && (
+              <View style={styles.syncBanner}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.syncBannerLabel}>UNSYNCED CHANGES</Text>
+                  <Text style={styles.syncBannerText}>
+                    {failedOps} change{failedOps === 1 ? '' : 's'} couldn&apos;t reach the cloud and only exist on this device.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.syncBannerBtn}
+                  onPress={() => { retryFailedOps().catch(() => {}); }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry unsynced changes"
+                >
+                  <Text style={styles.syncBannerBtnText}>RETRY</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.syncBannerBtn}
+                  onPress={confirmDiscardFailed}
+                  accessibilityRole="button"
+                  accessibilityLabel="Discard unsynced changes"
+                >
+                  <Text style={styles.syncBannerBtnText}>DISCARD</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -705,11 +753,13 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   cellWrapper: { flex: 1, gap: 8 },
-  cardSlot: { position: 'relative' },
+  // Constrain to the card width so the selection overlay (absoluteFill) lines
+  // up with the image instead of stretching to the full cell width.
+  cardSlot: { position: 'relative', width: 158, alignSelf: 'flex-start' },
   // Tinted overlay + corner badge that appears in selection mode.
   selectionOverlay: {
     ...StyleSheet.absoluteFillObject,
-    borderRadius: 10,
+    borderRadius: 8,
   },
   selectionOverlaySelected: {
     backgroundColor: 'rgba(255,215,0,0.18)',
@@ -946,14 +996,20 @@ const styles = StyleSheet.create({
   // ── Bulk selection action bar (floating, bottom of screen) ─────────────
   bulkBar: {
     position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingTop: 12,
-    paddingHorizontal: Spacing.xl,
+    left: Spacing.xl,
+    right: Spacing.xl,
+    // `bottom` is set inline to float above the tab bar.
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: Radius.lg,
     backgroundColor: Colors.elevated,
-    borderTopWidth: 1,
-    borderTopColor: Colors.line,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 12,
   },
   bulkBarInner: {
     flexDirection: 'row',

@@ -1,5 +1,16 @@
 import { useMemo, useState } from 'react';
-import { Alert, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -128,86 +139,91 @@ export default function BindersScreen() {
         onRequestClose={() => setSheetOpen(false)}
         statusBarTranslucent
       >
-        <TouchableOpacity
-          style={styles.backdrop}
-          activeOpacity={1}
-          onPress={() => setSheetOpen(false)}
-        />
-        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={styles.sheetGrabber} />
-          <Text style={styles.sheetEyebrow}>New binder</Text>
-          <Text style={styles.sheetTitle}>Choose a name & color</Text>
-
-          <TextInput
-            style={styles.sheetInput}
-            placeholder="Binder name"
-            placeholderTextColor={Colors.text3}
-            value={binderName}
-            onChangeText={setBinderName}
-            autoFocus
-            returnKeyType="done"
-          />
-
-          <View style={styles.swatchRow}>
-            {TONE_PAIRS.map(([start, end]) => (
-              <TouchableOpacity
-                key={start}
-                style={[
-                  styles.swatch,
-                  selectedTone[0] === start && styles.swatchSelected,
-                ]}
-                onPress={() => setSelectedTone([start, end])}
-              >
-                <LinearGradient
-                  colors={[start, end]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.swatchGradient}
-                />
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Smart binder toggle + inline rule editor */}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <TouchableOpacity
-            style={[styles.smartToggle, isSmart && styles.smartToggleActive]}
-            onPress={() => setIsSmart(v => !v)}
-            accessibilityRole="switch"
-            accessibilityState={{ checked: isSmart }}
-          >
-            <Icon name="flash" size={16} color={isSmart ? Colors.gold : Colors.text2} />
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.smartToggleLabel, isSmart && styles.smartToggleLabelActive]}>
-                Smart binder
-              </Text>
-              <Text style={styles.smartToggleHint}>
-                Auto-fills from your collection by set + rarity. Read-only.
-              </Text>
+            style={styles.backdrop}
+            activeOpacity={1}
+            onPress={() => setSheetOpen(false)}
+          />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={styles.sheetGrabber} />
+            <Text style={styles.sheetEyebrow}>New binder</Text>
+            <Text style={styles.sheetTitle}>Choose a name & color</Text>
+
+            <TextInput
+              style={styles.sheetInput}
+              placeholder="Binder name"
+              placeholderTextColor={Colors.text3}
+              value={binderName}
+              onChangeText={setBinderName}
+              autoFocus
+              returnKeyType="done"
+            />
+
+            <View style={styles.swatchRow}>
+              {TONE_PAIRS.map(([start, end]) => (
+                <TouchableOpacity
+                  key={start}
+                  style={[
+                    styles.swatch,
+                    selectedTone[0] === start && styles.swatchSelected,
+                  ]}
+                  onPress={() => setSelectedTone([start, end])}
+                >
+                  <LinearGradient
+                    colors={[start, end]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.swatchGradient}
+                  />
+                </TouchableOpacity>
+              ))}
             </View>
-            <View style={[styles.smartIndicator, isSmart && styles.smartIndicatorActive]} />
-          </TouchableOpacity>
 
-          {isSmart && (
-            <ScrollView style={styles.rulesScroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-              {ruleOptions.sets.length === 0 && ruleOptions.rarities.length === 0 ? (
-                <Text style={styles.ruleEmpty}>
-                  Your collection is empty — add some cards before you can build a smart binder.
+            {/* Smart binder toggle + inline rule editor */}
+            <TouchableOpacity
+              style={[styles.smartToggle, isSmart && styles.smartToggleActive]}
+              onPress={() => setIsSmart(v => !v)}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: isSmart }}
+            >
+              <Icon name="flash" size={16} color={isSmart ? Colors.gold : Colors.text2} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.smartToggleLabel, isSmart && styles.smartToggleLabelActive]}>
+                  Smart binder
                 </Text>
-              ) : (
-                <SmartRulesEditor
-                  value={draftRules}
-                  onChange={setDraftRules}
-                  availableSets={ruleOptions.sets}
-                  availableRarities={ruleOptions.rarities}
-                />
-              )}
-            </ScrollView>
-          )}
+                <Text style={styles.smartToggleHint}>
+                  Auto-fills from your collection by set + rarity. Read-only.
+                </Text>
+              </View>
+              <View style={[styles.smartIndicator, isSmart && styles.smartIndicatorActive]} />
+            </TouchableOpacity>
 
-          <TouchableOpacity style={styles.createBtn} onPress={handleCreate}>
-            <Text style={styles.createBtnText}>Create binder</Text>
-          </TouchableOpacity>
-        </View>
+            {isSmart && (
+              <ScrollView style={styles.rulesScroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                {ruleOptions.sets.length === 0 && ruleOptions.rarities.length === 0 ? (
+                  <Text style={styles.ruleEmpty}>
+                    Your collection is empty — add some cards before you can build a smart binder.
+                  </Text>
+                ) : (
+                  <SmartRulesEditor
+                    value={draftRules}
+                    onChange={setDraftRules}
+                    availableSets={ruleOptions.sets}
+                    availableRarities={ruleOptions.rarities}
+                  />
+                )}
+              </ScrollView>
+            )}
+
+            <TouchableOpacity style={styles.createBtn} onPress={handleCreate}>
+              <Text style={styles.createBtnText}>Create binder</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </>
   );

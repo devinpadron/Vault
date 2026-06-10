@@ -103,7 +103,7 @@ function SearchRow({ profile }: { profile: Profile }) {
       onPress={() => router.push(`/friend/${profile.id}`)}
       activeOpacity={0.85}
     >
-      <Avatar colors={avatarFor(profile.id)} size={44} />
+      <Avatar colors={avatarFor(profile.id)} uri={profile.avatar_url} size={44} />
       <View style={styles.rowInfo}>
         <Text style={styles.rowName}>{profile.display_name?.trim() || profile.username}</Text>
         <Text style={styles.rowHandle}>@{profile.username.toUpperCase()}</Text>

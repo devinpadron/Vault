@@ -114,14 +114,73 @@ export function uuidv4(): string {
   );
 }
 
+// ─── Sync lock ───────────────────────────────────────────────────────────────
+
+// Serializes the destructive mirror swap (pull) against the queue flusher.
+// Without it, a flush can apply ops to the cloud while a pull is mid-swap,
+// resurrecting deleted rows or losing optimistic writes from the mirror.
+let _syncLock: Promise<unknown> = Promise.resolve();
+
+function withSyncLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = _syncLock.then(fn, fn);
+  _syncLock = run.catch(() => {});
+  return run;
+}
+
+// ─── Local wipe ──────────────────────────────────────────────────────────────
+
+/**
+ * Purge every per-user local table: the cloud mirror AND the pending-ops
+ * queue. Called on sign-out so the next account on this device can't read
+ * the previous user's collection or flush their queued mutations under the
+ * new credentials.
+ */
+export async function wipeLocalUserData(): Promise<void> {
+  const db = await getDb();
+  await withSyncLock(() =>
+    db.withTransactionAsync(async () => {
+      await db.execAsync(`
+        DELETE FROM cloud_collections;
+        DELETE FROM cloud_collection_items;
+        DELETE FROM cloud_card_sales;
+        DELETE FROM cloud_card_grading;
+        DELETE FROM pending_ops;
+      `);
+    }),
+  );
+}
+
+/**
+ * Wipe local user data if the mirror holds rows belonging to someone other
+ * than `userId`. Covers the path where the previous session ended without a
+ * clean sign-out (token expired while the app was closed) and a different
+ * account signs in.
+ */
+export async function wipeIfForeignUserData(userId: string): Promise<void> {
+  const db = await getDb();
+  const foreign = await db.getFirstAsync<{ ok: number }>(
+    `SELECT 1 AS ok FROM cloud_collections WHERE user_id != ? LIMIT 1`,
+    [userId],
+  );
+  if (foreign) await wipeLocalUserData();
+}
+
 // ─── Pull from cloud ─────────────────────────────────────────────────────────
 
 /**
  * Replace the local mirror with the user's authoritative cloud state.
- * Runs on sign-in and on demand (e.g. pull-to-refresh). Pending ops are NOT
- * touched — they're applied on top of whatever the pull writes.
+ * Runs on sign-in and on demand (e.g. pull-to-refresh). The queue is drained
+ * first; if undrained ops remain (offline, cloud erroring) the destructive
+ * swap is skipped so optimistic local writes aren't clobbered.
  */
 export async function pullCollectionsFromCloud(userId: string): Promise<void> {
+  // Drain the queue first so cloud state reflects local mutations before we
+  // mirror it back down.
+  await flushPendingOps();
+  return withSyncLock(() => doPull(userId));
+}
+
+async function doPull(userId: string): Promise<void> {
   // 1. Fetch collections + items in two queries.
   const { data: collections, error: cErr } = await supabase
     .from('collections')
@@ -233,7 +292,19 @@ export async function pullCollectionsFromCloud(userId: string): Promise<void> {
   }
 
   // 3. Atomic swap: clear + repopulate the mirror in a single transaction.
+  // Re-check the queue inside the transaction: an op enqueued while we were
+  // fetching (or stuck offline) means the cloud snapshot we hold is already
+  // stale relative to local intent — skip the swap and keep the optimistic
+  // mirror; the next pull after the queue drains will reconcile.
+  let swapped = true;
   await db.withTransactionAsync(async () => {
+    const undrained = await db.getFirstAsync<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM pending_ops WHERE status != 'failed'`,
+    );
+    if ((undrained?.n ?? 0) > 0) {
+      swapped = false;
+      return;
+    }
     await db.execAsync(`DELETE FROM cloud_collections; DELETE FROM cloud_collection_items; DELETE FROM cloud_card_sales; DELETE FROM cloud_card_grading;`);
 
     for (const raw of collectionsData ?? []) {
@@ -313,6 +384,7 @@ export async function pullCollectionsFromCloud(userId: string): Promise<void> {
       );
     }
   });
+  if (!swapped) return;
 
   // 4. Drop legacy tables now that cloud state is mirrored locally.
   await dropLegacyUserTables();
@@ -721,12 +793,14 @@ let _flushInFlight: Promise<void> | null = null;
 
 /**
  * Drain pending_ops in FIFO order. Best-effort: errors back off, succeeded
- * ops are deleted. Reentrant-safe — concurrent callers share the same
- * in-flight promise so we never run two flushers at once.
+ * ops are deleted, permanently-failed ops are parked with status='failed'
+ * (see useFailedOpsCount / retryFailedOps). Reentrant-safe — concurrent
+ * callers share the same in-flight promise so we never run two flushers at
+ * once, and the shared sync lock keeps flushes from interleaving with pulls.
  */
 export function flushPendingOps(): Promise<void> {
   if (_flushInFlight) return _flushInFlight;
-  _flushInFlight = doFlush().finally(() => { _flushInFlight = null; });
+  _flushInFlight = withSyncLock(doFlush).finally(() => { _flushInFlight = null; });
   return _flushInFlight;
 }
 
@@ -743,6 +817,7 @@ async function doFlush(): Promise<void> {
     }>(
       `SELECT id, op_type, payload, attempt_count, last_attempt_at
          FROM pending_ops
+        WHERE status != 'failed'
         ORDER BY id ASC
         LIMIT 1`,
     );
@@ -778,17 +853,46 @@ async function doFlush(): Promise<void> {
         [nextAttempt, Date.now(), msg.slice(0, 500), op.id],
       );
       if (nextAttempt >= MAX_ATTEMPTS) {
-        // Permanently failed. Drop so we don't block the queue forever.
+        // Permanently failed. Park it as a dead letter so it stops blocking
+        // the queue but stays visible — the UI surfaces a banner offering
+        // retry/discard instead of silently losing the mutation.
         if (__DEV__) {
-          console.warn(`[cloud-sync] dropping op #${op.id} (${op.op_type}) after ${MAX_ATTEMPTS} attempts: ${msg}`);
+          console.warn(`[cloud-sync] parking op #${op.id} (${op.op_type}) as failed after ${MAX_ATTEMPTS} attempts: ${msg}`);
         }
-        await db.runAsync(`DELETE FROM pending_ops WHERE id = ?`, [op.id]);
+        await db.runAsync(`UPDATE pending_ops SET status = 'failed' WHERE id = ?`, [op.id]);
         continue;
       }
       // Backoff — leave the queue here and let the next flush retry.
       return;
     }
   }
+}
+
+/** Number of dead-lettered ops (mutations that exhausted their retries). */
+export async function getFailedOpsCount(): Promise<number> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM pending_ops WHERE status = 'failed'`,
+  );
+  return row?.n ?? 0;
+}
+
+/** Re-queue all dead-lettered ops with a fresh retry budget and kick a flush. */
+export async function retryFailedOps(): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE pending_ops
+        SET status = 'pending', attempt_count = 0, last_attempt_at = NULL
+      WHERE status = 'failed'`,
+  );
+  await flushPendingOps();
+}
+
+/** Drop all dead-lettered ops. The local mirror keeps its optimistic state,
+ *  which the next successful pull reconciles back to cloud truth. */
+export async function discardFailedOps(): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM pending_ops WHERE status = 'failed'`);
 }
 
 async function applyOpToCloud(opType: string, payload: Record<string, unknown>): Promise<void> {

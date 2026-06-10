@@ -21,6 +21,7 @@ function profileToFriend(p: Profile, binderCount: number): Friend {
     name:    p.display_name?.trim() || p.username,
     handle:  `@${p.username}`,
     avatar:  avatarFor(p.id),
+    avatarUrl: p.avatar_url,
     binders: binderCount,
     recent:  '',           // populated by useFriend's join — list rows leave blank
   };

@@ -105,7 +105,7 @@ function FriendRow({ friend, index }: { friend: Friend; index: number }) {
         accessibilityRole="button"
         accessibilityLabel={`View ${friend.name}'s profile`}
       >
-        <Avatar colors={friend.avatar} size={48} />
+        <Avatar colors={friend.avatar} uri={friend.avatarUrl} size={48} />
 
         <View style={styles.rowInfo}>
           <Text style={styles.rowName}>{friend.name}</Text>

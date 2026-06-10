@@ -1,5 +1,5 @@
-import { StyleSheet } from 'react-native';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Stack, useRouter, useSegments, type ErrorBoundaryProps } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFonts } from 'expo-font';
@@ -10,6 +10,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from '@/lib/auth/AuthContext';
+import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,6 +23,33 @@ const queryClient = new QueryClient({
 
 SplashScreen.preventAutoHideAsync();
 
+// Picked up by expo-router as the global error boundary. Without it, an
+// uncaught render error white-screens the app (or strands it on the splash
+// if the error fires before the first hide).
+export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  useEffect(() => {
+    SplashScreen.hideAsync();
+  }, []);
+
+  return (
+    <View style={styles.errorRoot}>
+      <Text style={styles.errorTitle}>Something went wrong</Text>
+      <Text style={styles.errorSubtitle}>
+        An unexpected error interrupted the app. Your collection is safe — try again.
+      </Text>
+      {__DEV__ && <Text style={styles.errorDetail}>{error.message}</Text>}
+      <TouchableOpacity
+        style={styles.errorBtn}
+        onPress={retry}
+        accessibilityRole="button"
+        accessibilityLabel="Try again"
+      >
+        <Text style={styles.errorBtnText}>TRY AGAIN</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 // Sits inside AuthProvider — coordinates splash hide and auth-based navigation.
 // Keeps the splash screen visible until both fonts and auth status are known,
 // then navigates to the correct route before revealing any UI.
@@ -33,11 +61,17 @@ function AppController({ fontsLoaded }: { fontsLoaded: boolean }) {
   useEffect(() => {
     if (!fontsLoaded || status === 'loading') return;
 
-    const inAuthGroup = segments[0] === '(auth)';
+    // auth-callback is part of the sign-in flow: it arrives via deep link
+    // while the user is still unauthenticated, so it must not be bounced
+    // back to the welcome screen before it can process the OAuth tokens.
+    // Widened to string: the generated route union only refreshes when the
+    // dev server runs, so a fresh checkout wouldn't know the route yet.
+    const segment = segments[0] as string | undefined;
+    const inAuthFlow = segment === '(auth)' || segment === 'auth-callback';
 
-    if (status === 'unauthenticated' && !inAuthGroup) {
+    if (status === 'unauthenticated' && !inAuthFlow) {
       router.replace('/(auth)/welcome');
-    } else if (status === 'authenticated' && inAuthGroup) {
+    } else if (status === 'authenticated' && inAuthFlow) {
       router.replace('/(tabs)');
     }
 
@@ -48,7 +82,7 @@ function AppController({ fontsLoaded }: { fontsLoaded: boolean }) {
 }
 
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     InstrumentSerif_400Regular,
     InstrumentSerif_400Regular_Italic,
     SpaceGrotesk_400Regular,
@@ -56,19 +90,23 @@ export default function RootLayout() {
     JetBrainsMono_400Regular,
     JetBrainsMono_500Medium,
   });
+  // A font-load failure must not strand the app on the splash screen —
+  // proceed with system-font fallbacks instead.
+  const fontsReady = fontsLoaded || !!fontError;
 
   // Do NOT hide the splash here — AppController does it once both fonts
   // and auth status are resolved, preventing any intermediate flash.
-  if (!fontsLoaded) return null;
+  if (!fontsReady) return null;
 
   return (
-    <AuthProvider>
-      <QueryClientProvider client={queryClient}>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
         <GestureHandlerRootView style={styles.root}>
-          <AppController fontsLoaded={fontsLoaded} />
-          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0A0A0C' } }}>
+          <AppController fontsLoaded={fontsReady} />
+          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.bg } }}>
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="(auth)" />
+            <Stack.Screen name="auth-callback" />
             <Stack.Screen name="card/[id]" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
             <Stack.Screen name="scanner" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
             <Stack.Screen name="search" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
@@ -84,11 +122,54 @@ export default function RootLayout() {
           </Stack>
           <StatusBar style="light" />
         </GestureHandlerRootView>
-      </QueryClientProvider>
-    </AuthProvider>
+      </AuthProvider>
+    </QueryClientProvider>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  errorRoot: {
+    flex: 1,
+    backgroundColor: Colors.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xl,
+    gap: 12,
+  },
+  errorTitle: {
+    fontFamily: FontFamily.display,
+    fontSize: 28,
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  errorSubtitle: {
+    fontFamily: FontFamily.body,
+    fontSize: 13,
+    color: Colors.text3,
+    textAlign: 'center',
+    lineHeight: 19,
+  },
+  errorDetail: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    color: Colors.down,
+    textAlign: 'center',
+    lineHeight: 14,
+  },
+  errorBtn: {
+    marginTop: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  errorBtnText: {
+    fontFamily: FontFamily.mono,
+    fontSize: 11,
+    letterSpacing: 1.6,
+    color: Colors.text2,
+  },
 });

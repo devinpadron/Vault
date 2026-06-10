@@ -67,4 +67,4 @@ Migrations are in `supabase/migrations/`. The schema is tiered by data volatilit
 
 ### Roadmap
 
-`TODO-functional.md` is the authoritative list of what is broken or not yet wired. Work through it top-to-bottom (Section 1 → 9) — earlier sections unblock later ones.
+`FEATURE-IDEAS.md` is the forward-looking feature list (items marked ✓ Shipped are live). The only intentionally stubbed surface is the Market tab.

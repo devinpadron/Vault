@@ -7,6 +7,7 @@ import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { parseOAuthRedirect } from '@/lib/auth/parseOAuthRedirect';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 
 // `vault://` is the scheme configured in app.json. We use a flat callback
@@ -15,10 +16,10 @@ import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 const REDIRECT_URL = Linking.createURL('auth-callback');
 if (__DEV__) console.log('[auth] OAuth redirect URL =', REDIRECT_URL);
 
-// TODO: replace with the real public URLs before App Store submission.
-// Apple's review specifically checks that the in-app legal links resolve.
-const TERMS_URL   = 'https://example.com/vault/terms';
-const PRIVACY_URL = 'https://example.com/vault/privacy';
+// Served from docs/legal/ via GitHub Pages (repo settings → Pages → main,
+// /docs folder). Apple's review checks that these resolve.
+const TERMS_URL   = 'https://devinpadron.github.io/Vault/legal/terms.html';
+const PRIVACY_URL = 'https://devinpadron.github.io/Vault/legal/privacy.html';
 
 export default function WelcomeScreen() {
   const [busy, setBusy] = useState<'apple' | 'google' | null>(null);
@@ -78,15 +79,11 @@ export default function WelcomeScreen() {
 
       if (result.type === 'success' && result.url) {
         // Pull the tokens out of the redirect URL fragment and stash the session.
-        const parsed = Linking.parse(result.url);
-        const fragment = (result.url.split('#')[1] ?? '');
-        const params = new URLSearchParams(fragment);
-        const access_token  = params.get('access_token')  ?? (parsed.queryParams?.access_token as string | undefined);
-        const refresh_token = params.get('refresh_token') ?? (parsed.queryParams?.refresh_token as string | undefined);
-        if (!access_token || !refresh_token) {
+        const tokens = parseOAuthRedirect(result.url);
+        if (!tokens) {
           throw new Error('OAuth response missing tokens.');
         }
-        const { error: setErr } = await supabase.auth.setSession({ access_token, refresh_token });
+        const { error: setErr } = await supabase.auth.setSession(tokens);
         if (setErr) throw setErr;
       }
       // result.type === 'cancel' or 'dismiss' — silent fall-through.

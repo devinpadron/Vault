@@ -100,7 +100,7 @@ export default function FriendProfileScreen() {
             style={styles.ringOuter}
           >
             <View style={styles.ringGap}>
-              <Avatar colors={friend.avatar} size={88} />
+              <Avatar colors={friend.avatar} uri={friend.avatarUrl} size={88} />
             </View>
           </LinearGradient>
 

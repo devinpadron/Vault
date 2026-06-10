@@ -37,6 +37,14 @@
           "cameraPermission": "Vault uses the camera to scan Pokémon cards."
         }
       ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Vault uses your photo library to set your profile picture.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
       "expo-apple-authentication"
     ],
     "experiments": {

@@ -77,7 +77,7 @@ function RequestRow({ request }: { request: IncomingFriendRequest }) {
         onPress={() => router.push(`/friend/${p.id}`)}
         activeOpacity={0.85}
       >
-        <Avatar colors={avatarFor(p.id)} size={44} />
+        <Avatar colors={avatarFor(p.id)} uri={p.avatar_url} size={44} />
         <View style={styles.rowInfo}>
           <Text style={styles.rowName}>{p.display_name?.trim() || p.username}</Text>
           <Text style={styles.rowHandle}>@{p.username.toUpperCase()}</Text>

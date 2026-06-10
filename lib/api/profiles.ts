@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { File } from 'expo-file-system';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
 export { avatarFor } from '@/lib/avatar';
@@ -184,6 +185,83 @@ export function useUpdateProfile() {
     onSuccess: profile => {
       qc.setQueryData(['profile', profile.id], profile);
       qc.invalidateQueries({ queryKey: ['profile-search'] });
+    },
+  });
+}
+
+// ─── Avatar ───────────────────────────────────────────────────────────────────
+
+const AVATAR_BUCKET = 'avatars';
+
+const EXT_BY_MIME: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png':  'png',
+  'image/webp': 'webp',
+};
+
+// Storage object path for a public avatar URL, or null when the URL doesn't
+// point into our bucket (e.g. an OAuth-provider picture).
+function avatarStoragePath(url: string | null): string | null {
+  if (!url) return null;
+  const marker = `/object/public/${AVATAR_BUCKET}/`;
+  const idx = url.indexOf(marker);
+  return idx === -1 ? null : decodeURIComponent(url.slice(idx + marker.length).split('?')[0]);
+}
+
+export interface SetAvatarInput {
+  uri: string;
+  mimeType?: string;
+}
+
+/**
+ * Uploads a locally-picked image as the user's profile picture, or clears it
+ * when called with `null`. Each upload gets a unique filename so the public
+ * CDN URL changes (no stale-cache issue); the previous object is deleted
+ * best-effort afterwards.
+ */
+export function useSetAvatar() {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: SetAvatarInput | null) => {
+      if (!user) throw new Error('Not signed in');
+
+      const previous = qc.getQueryData<Profile | null>(['profile', user.id]);
+      const oldPath = avatarStoragePath(previous?.avatar_url ?? null);
+
+      let avatarUrl: string | null = null;
+      if (input) {
+        const contentType = input.mimeType ?? 'image/jpeg';
+        const ext = EXT_BY_MIME[contentType] ?? 'jpg';
+        const path = `${user.id}/${Date.now()}.${ext}`;
+        const bytes = await new File(input.uri).bytes();
+        const { error: uploadErr } = await supabase.storage
+          .from(AVATAR_BUCKET)
+          .upload(path, bytes, { contentType });
+        if (uploadErr) throw uploadErr;
+        avatarUrl = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path).data.publicUrl;
+      }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ avatar_url: avatarUrl })
+        .eq('id', user.id)
+        .select(PROFILE_COLUMNS)
+        .single();
+      if (error) throw error;
+
+      if (oldPath) {
+        supabase.storage.from(AVATAR_BUCKET).remove([oldPath]).then(({ error: rmErr }) => {
+          if (rmErr && __DEV__) console.warn('[avatar] old object cleanup failed:', rmErr);
+        });
+      }
+      return data as Profile;
+    },
+    onSuccess: profile => {
+      qc.setQueryData(['profile', profile.id], profile);
+      qc.invalidateQueries({ queryKey: ['profile-search'] });
+      // Friends-side caches embed avatar_url via profileToFriend.
+      qc.invalidateQueries({ queryKey: ['friends'] });
     },
   });
 }

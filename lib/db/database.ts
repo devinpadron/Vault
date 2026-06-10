@@ -117,7 +117,8 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
         created_at      INTEGER NOT NULL,
         last_attempt_at INTEGER,
         attempt_count   INTEGER NOT NULL DEFAULT 0,
-        last_error      TEXT
+        last_error      TEXT,
+        status          TEXT NOT NULL DEFAULT 'pending'  -- 'pending' | 'failed'
       );
     `);
     await migrateAddColumns(db);
@@ -149,6 +150,14 @@ async function migrateAddColumns(db: SQLite.SQLiteDatabase): Promise<void> {
   if (!collNames.has('rules')) {
     // Stored as JSON-encoded TEXT; null = manual binder.
     await db.execAsync(`ALTER TABLE cloud_collections ADD COLUMN rules TEXT`);
+  }
+
+  const opCols = await db.getAllAsync<{ name: string }>(
+    `PRAGMA table_info(pending_ops)`,
+  );
+  const opNames = new Set(opCols.map(c => c.name));
+  if (!opNames.has('status')) {
+    await db.execAsync(`ALTER TABLE pending_ops ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'`);
   }
 }
 

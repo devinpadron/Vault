@@ -91,7 +91,7 @@ export default function MyProfileScreen() {
             style={styles.ringOuter}
           >
             <View style={styles.ringGap}>
-              <Avatar colors={avatar} size={88} />
+              <Avatar colors={avatar} uri={profile.avatar_url} size={88} />
             </View>
           </LinearGradient>
 

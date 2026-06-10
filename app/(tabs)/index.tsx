@@ -11,6 +11,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { NewsRow } from '@/components/news/NewsRow';
 import { useFeaturedCard, usePortfolioHistory } from '@/lib/api/cards';
 import { useNews } from '@/lib/api/news';
+import { useMyProfile } from '@/lib/api/profiles';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useCollectionCards } from '@/lib/db/collection';
 import { fmt } from '@/lib/format';
@@ -22,6 +23,7 @@ export default function HomeScreen() {
   const { data: featured, isLoading: featuredLoading } = useFeaturedCard();
   const { data: news = [] } = useNews();
   const { user } = useAuth();
+  const { data: profile } = useMyProfile();
   const { data: collectionCards = [] } = useCollectionCards();
 
   const totalValue = collectionCards.reduce((sum, c) => sum + c.value, 0);
@@ -70,7 +72,7 @@ export default function HomeScreen() {
               accessibilityLabel="Open profile"
               accessibilityRole="button"
             >
-              <Avatar colors={user.avatar} size={40} />
+              <Avatar colors={user.avatar} uri={profile?.avatar_url} size={40} />
             </TouchableOpacity>
           )}
         </View>
