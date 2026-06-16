@@ -2,6 +2,7 @@ import { StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import { Card } from '@/types';
+import { Colors } from '@/constants/theme';
 
 interface Props {
   card: Card;
@@ -25,7 +26,7 @@ export function CardThumb({ card, width, ratio = 1.4 }: Props) {
 
       {/* Gloss highlight */}
       <LinearGradient
-        colors={['rgba(255,255,255,0.22)', 'rgba(255,255,255,0.04)', 'transparent']}
+        colors={['rgba(255,255,255,0.22)', Colors.glass, 'transparent']}
         locations={[0, 0.35, 1]}
         start={{ x: 0.15, y: 0 }}
         end={{ x: 0.85, y: 0.6 }}
@@ -36,7 +37,7 @@ export function CardThumb({ card, width, ratio = 1.4 }: Props) {
       {card.foil && (
         <LinearGradient
           colors={[
-            'rgba(255,215,0,0.08)',
+            Colors.goldFaint,
             'rgba(122,107,255,0.10)',
             'rgba(95,210,255,0.08)',
             'rgba(255,91,182,0.06)',
@@ -55,6 +56,7 @@ export function CardThumb({ card, width, ratio = 1.4 }: Props) {
           style={[StyleSheet.absoluteFill, { borderRadius: 8 }]}
           contentFit="cover"
           transition={300}
+          cachePolicy="memory-disk"
           recyclingKey={card.id}
         />
       )}

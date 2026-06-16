@@ -6,11 +6,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import { Avatar } from '@/components/ui/Avatar';
 import { Icon } from '@/components/ui/Icon';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { useMyProfile } from '@/lib/api/profiles';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useCollectionEntries, useAddToCollection, useUpdateCostBasis } from '@/lib/db/collection';
 import { shareCollectionCsv, pickCsvFile, parseCsvFile, resolveImportRows } from '@/lib/csv';
-import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
+import { Colors, Gradients, FontFamily, Radius, Spacing } from '@/constants/theme';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
@@ -95,20 +96,13 @@ export default function SettingsScreen() {
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Nav bar */}
-        <View style={[styles.navBar, { paddingTop: insets.top + 8 }]}>
-          <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
-            <Icon name="chevron-left" size={18} color={Colors.text} />
-          </TouchableOpacity>
-          <Text style={styles.navTitle}>Settings</Text>
-          <View style={styles.navBtn} />
-        </View>
+        <ScreenHeader title="Settings" />
 
         {/* Profile */}
         {user && (
           <View style={styles.profileSection}>
             <LinearGradient
-              colors={['#FFD700', '#ff5fb6']}
+              colors={Gradients.profileRing}
               start={{ x: 0.15, y: 0 }}
               end={{ x: 0.85, y: 1 }}
               style={styles.avatarRing}
@@ -212,19 +206,6 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 0,
-  },
-  navBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: 16,
-  },
-  navBtn: NavButtonStyle,
-  navTitle: {
-    fontFamily: FontFamily.display,
-    fontSize: 22,
-    color: Colors.text,
   },
   // Profile
   profileSection: {

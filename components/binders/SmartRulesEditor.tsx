@@ -263,9 +263,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     borderWidth: 1,
     borderColor: Colors.line,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     overflow: 'hidden',
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   segment: {
     flex: 1,
@@ -273,7 +273,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   segmentActive: {
-    backgroundColor: 'rgba(255,215,0,0.12)',
+    backgroundColor: Colors.goldTint,
   },
   segmentText: {
     fontFamily: FontFamily.mono,
@@ -292,10 +292,10 @@ const styles = StyleSheet.create({
   chip: {
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   chipActive: {
     borderColor: 'rgba(255,215,0,0.45)',
@@ -323,7 +323,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.line,
     borderRadius: Radius.md,
     paddingHorizontal: 10,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   rangePrefix: {
     fontFamily: FontFamily.mono,
@@ -352,12 +352,12 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
     marginTop: 14,
   },
   toggleRowActive: {
     borderColor: 'rgba(255,215,0,0.45)',
-    backgroundColor: 'rgba(255,215,0,0.08)',
+    backgroundColor: Colors.goldFaint,
   },
   toggleLabel: {
     fontFamily: FontFamily.body,

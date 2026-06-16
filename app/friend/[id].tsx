@@ -18,7 +18,7 @@ import {
   useSendFriendRequest,
 } from '@/lib/api/friends';
 import { Binder } from '@/types';
-import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
+import { Colors, Gradients, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 
 export default function FriendProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -94,7 +94,7 @@ export default function FriendProfileScreen() {
 
         <View style={styles.hero}>
           <LinearGradient
-            colors={['#FFD700', '#ff5fb6']}
+            colors={Gradients.profileRing}
             start={{ x: 0.15, y: 0 }}
             end={{ x: 0.85, y: 1 }}
             style={styles.ringOuter}
@@ -119,6 +119,25 @@ export default function FriendProfileScreen() {
         <View style={styles.divider} />
 
         <View style={styles.bindersSection}>
+          {main && (
+            <TouchableOpacity
+              style={styles.compareRow}
+              onPress={() =>
+                router.push(`/friend-diff?id=${friend.id}&name=${encodeURIComponent(friend.name)}`)
+              }
+              accessibilityRole="button"
+              accessibilityLabel="Compare collections"
+              activeOpacity={0.85}
+            >
+              <Icon name="compare" size={16} color={Colors.gold} />
+              <View style={styles.compareInfo}>
+                <Text style={styles.compareTitle}>Compare collections</Text>
+                <Text style={styles.compareMeta}>See what you each have that the other doesn&apos;t</Text>
+              </View>
+              <Icon name="chevron-right" size={14} color={Colors.text3} />
+            </TouchableOpacity>
+          )}
+
           {!main && !wishlist && binders.length === 0 ? (
             <Text style={styles.muted}>
               Nothing shared publicly yet.
@@ -354,7 +373,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   ctaPrimaryMuted: { backgroundColor: 'rgba(255,215,0,0.2)' },
-  ctaPrimaryText: { fontFamily: FontFamily.bodySemi, fontSize: 14, color: '#0A0A0C' },
+  ctaPrimaryText: { fontFamily: FontFamily.bodySemi, fontSize: 14, color: Colors.bg },
   ctaPrimaryTextMuted: { color: 'rgba(10,10,12,0.6)' },
   ctaGhost: {
     flex: 1,
@@ -362,7 +381,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
     alignItems: 'center',
   },
   ctaGhostText: { fontFamily: FontFamily.bodySemi, fontSize: 14, color: Colors.text },
@@ -375,6 +394,25 @@ const styles = StyleSheet.create({
   },
 
   bindersSection: { paddingHorizontal: Spacing.xl },
+  compareRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: Radius.md,
+    backgroundColor: 'rgba(255,215,0,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,215,0,0.25)',
+    marginBottom: 24,
+  },
+  compareInfo: { flex: 1 },
+  compareTitle: { fontFamily: FontFamily.bodySemi, fontSize: 14, color: Colors.text },
+  compareMeta: {
+    fontFamily: FontFamily.body,
+    fontSize: 11,
+    color: Colors.text3,
+    marginTop: 2,
+  },
   section: { marginBottom: 24 },
   sectionEyebrow: {
     fontFamily: FontFamily.mono,

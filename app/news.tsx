@@ -1,12 +1,12 @@
-import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
-import { Icon } from '@/components/ui/Icon';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { SkeletonRow } from '@/components/ui/SkeletonRow';
 import { NewsRow } from '@/components/news/NewsRow';
 import { useNews } from '@/lib/api/news';
-import { Colors, FontFamily, NavButtonStyle, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, Spacing } from '@/constants/theme';
 
 export default function NewsScreen() {
   const insets = useSafeAreaInsets();
@@ -14,13 +14,7 @@ export default function NewsScreen() {
 
   return (
     <View style={styles.root}>
-      <View style={[styles.navBar, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
-          <Icon name="chevron-left" size={18} color={Colors.text} />
-        </TouchableOpacity>
-        <Text style={styles.navTitle}>The Brief</Text>
-        <View style={styles.navBtn} />
-      </View>
+      <ScreenHeader title="The Brief" />
 
       {isError ? (
         <View style={styles.centerFill}>
@@ -44,9 +38,11 @@ export default function NewsScreen() {
           }
           ListEmptyComponent={
             !isLoading ? (
-              <View style={styles.empty}>
-                <Text style={styles.emptyText}>No news yet — check back soon.</Text>
-              </View>
+              <EmptyState
+                icon="flash"
+                title="No news yet"
+                caption="Fresh card-market stories land here — check back soon."
+              />
             ) : null
           }
           renderItem={({ item }) => <NewsRow item={item} />}
@@ -63,16 +59,6 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: Spacing.xl, paddingTop: 4 },
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  navBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: 14,
-  },
-  navTitle: { fontFamily: FontFamily.display, fontSize: 22, color: Colors.text },
-  navBtn: NavButtonStyle,
-
   eyebrow: {
     fontFamily: FontFamily.mono,
     fontSize: 10,
@@ -83,7 +69,4 @@ const styles = StyleSheet.create({
   },
 
   separator: { height: 1, backgroundColor: Colors.line },
-
-  empty: { alignItems: 'center', paddingVertical: 60 },
-  emptyText: { fontFamily: FontFamily.body, fontSize: 13, color: Colors.text3 },
 });

@@ -13,16 +13,14 @@ import {
   useProfileCollections,
   useProfileStats,
 } from '@/lib/api/profiles';
-import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
+import { Colors, Gradients, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 
-// Per-kind destination. for_trade has no dedicated screen yet — left null so
-// the row stays informational rather than navigating to a dead end.
+// Per-kind destination.
 function destinationFor(c: PublicCollection): string | null {
   switch (c.kind) {
     case 'collection': return '/(tabs)/collection';
     case 'wishlist':   return '/wishlist';
     case 'binder':     return `/binder/${c.id}`;
-    case 'for_trade':  return null;
   }
 }
 
@@ -85,7 +83,7 @@ export default function MyProfileScreen() {
 
         <View style={styles.hero}>
           <LinearGradient
-            colors={['#FFD700', '#ff5fb6']}
+            colors={Gradients.profileRing}
             start={{ x: 0.15, y: 0 }}
             end={{ x: 0.85, y: 1 }}
             style={styles.ringOuter}
@@ -244,14 +242,14 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.gold,
     alignItems: 'center',
   },
-  ctaPrimaryText: { fontFamily: FontFamily.bodySemi, fontSize: 14, color: '#0A0A0C' },
+  ctaPrimaryText: { fontFamily: FontFamily.bodySemi, fontSize: 14, color: Colors.bg },
   ctaGhost: {
     width: 50,
     paddingVertical: 13,
     borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
     alignItems: 'center',
   },
 

@@ -21,23 +21,23 @@ import {
   useFriendshipStatus,
   useSendFriendRequest,
 } from '@/lib/api/friends';
-import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
+import { useDebouncedValue } from '@/lib/hooks/useDebouncedValue';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { haptic } from '@/lib/haptics';
+import { Colors, FontFamily, PressOpacity, Radius, Spacing } from '@/constants/theme';
 
 export default function FriendSearchScreen() {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
+  // One profile query per pause in typing, not per keystroke.
+  const debouncedQuery = useDebouncedValue(query, 300);
 
-  const { data: results = [], isFetching } = useSearchProfiles(query);
+  const { data: results = [], isFetching } = useSearchProfiles(debouncedQuery);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
-      <View style={styles.navBar}>
-        <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
-          <Icon name="chevron-left" size={18} color={Colors.text} />
-        </TouchableOpacity>
-        <Text style={styles.navTitle}>Find friends</Text>
-        <View style={styles.navBtn} />
-      </View>
+      <ScreenHeader title="Find friends" topInset={false} />
 
       <View style={styles.searchWrap}>
         <View style={styles.searchRow}>
@@ -61,17 +61,21 @@ export default function FriendSearchScreen() {
       </View>
 
       {query.trim().length < 2 ? (
-        <View style={styles.empty}>
-          <Text style={styles.emptyText}>Type at least 2 characters to search.</Text>
-        </View>
+        <EmptyState
+          icon="search"
+          title="Find your friends"
+          caption="Type at least 2 characters of a username or name."
+        />
       ) : isFetching && results.length === 0 ? (
         <View style={styles.empty}>
           <ActivityIndicator color={Colors.text3} />
         </View>
       ) : results.length === 0 ? (
-        <View style={styles.empty}>
-          <Text style={styles.emptyText}>No one matched &ldquo;{query}&rdquo;.</Text>
-        </View>
+        <EmptyState
+          icon="people"
+          title="No one matched"
+          caption={`Nothing for “${query}” — try another spelling.`}
+        />
       ) : (
         <FlatList
           data={results}
@@ -91,6 +95,7 @@ function SearchRow({ profile }: { profile: Profile }) {
 
   async function handleSend() {
     try {
+      haptic('medium');
       await send.mutateAsync(profile.id);
     } catch {
       // mutation surfaces an error to query state; ignore for now.
@@ -101,7 +106,7 @@ function SearchRow({ profile }: { profile: Profile }) {
     <TouchableOpacity
       style={styles.row}
       onPress={() => router.push(`/friend/${profile.id}`)}
-      activeOpacity={0.85}
+      activeOpacity={PressOpacity}
     >
       <Avatar colors={avatarFor(profile.id)} uri={profile.avatar_url} size={44} />
       <View style={styles.rowInfo}>
@@ -137,16 +142,6 @@ function SearchRow({ profile }: { profile: Profile }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
-
-  navBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: 12,
-  },
-  navTitle: { fontFamily: FontFamily.display, fontSize: 22, color: Colors.text },
-  navBtn: NavButtonStyle,
 
   searchWrap: { paddingHorizontal: Spacing.xl, paddingTop: 4, paddingBottom: 14 },
   searchRow: {
@@ -194,8 +189,8 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     backgroundColor: Colors.gold,
   },
-  addBtnDisabled: { backgroundColor: 'rgba(255,215,0,0.3)' },
-  addBtnText: { fontFamily: FontFamily.mono, fontSize: 10, color: '#0A0A0C', letterSpacing: 1.5 },
+  addBtnDisabled: { backgroundColor: Colors.goldBorder },
+  addBtnText: { fontFamily: FontFamily.mono, fontSize: 10, color: Colors.bg, letterSpacing: 1.5 },
 
   statusBadge: {
     paddingHorizontal: 10,
@@ -203,7 +198,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   statusBadgeText: {
     fontFamily: FontFamily.mono,

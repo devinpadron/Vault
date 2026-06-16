@@ -48,8 +48,9 @@ export function pricingCacheKey(
   type: 'raw' | 'graded',
   grader: string | undefined,
   grade: string | undefined,
+  condition: string | undefined,
 ): string {
-  return [cardId, variantId ?? '_', type, grader ?? '_', grade ?? '_'].join('|');
+  return [cardId, variantId ?? '_', type, grader ?? '_', grade ?? '_', condition ?? '_'].join('|');
 }
 
 export async function getCachedPricing(key: string): Promise<CardPricing | null> {

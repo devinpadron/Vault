@@ -17,11 +17,9 @@ import {
   useGradingQueue, useUpsertGrading, useDeleteGrading,
 } from '@/lib/db/grading';
 import { GradingStage } from '@/lib/db/cloud-sync';
+import { GRADERS, Grader } from '@/lib/grading/constants';
 import { Card } from '@/types';
 import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
-
-const GRADERS = ['PSA', 'CGC', 'BGS', 'TAG', 'ACE'] as const;
-type Grader = (typeof GRADERS)[number];
 
 function StageChip({ stage }: { stage: GradingStage }) {
   const tone =
@@ -465,7 +463,7 @@ const styles = StyleSheet.create({
   stageChip: {
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     borderWidth: 1,
   },
   stageChipText: {
@@ -527,7 +525,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
     marginBottom: 14,
   },
   pickerValue: {
@@ -545,10 +543,10 @@ const styles = StyleSheet.create({
   selectChip: {
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   selectChipActive: {
     borderColor: 'rgba(255,215,0,0.45)',
@@ -569,7 +567,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
     fontFamily: FontFamily.mono,
     fontSize: 14,
     color: Colors.text,
@@ -584,7 +582,7 @@ const styles = StyleSheet.create({
   primaryBtnText: {
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
-    color: '#0A0A0C',
+    color: Colors.bg,
   },
   dangerBtn: {
     paddingVertical: 14,

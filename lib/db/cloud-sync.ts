@@ -15,14 +15,16 @@
 //     Per product decision the legacy SQLite-only tables (collection_cards,
 //     binders, binder_cards, wishlist_cards) are dropped at that point.
 
+import type { SQLiteDatabase } from 'expo-sqlite';
 import { supabase } from '@/lib/supabase';
 import { TONE_PAIRS } from '@/lib/binder-tones';
-import { dropLegacyUserTables, getDb } from './database';
+import { CARD_SELECT, mapRow, SupabaseCardFull } from '@/lib/api/types';
+import { getDb } from './database';
 import { Card } from '@/types';
 
 // ─── Types & helpers ─────────────────────────────────────────────────────────
 
-export type CollectionKind = 'collection' | 'wishlist' | 'binder' | 'for_trade';
+export type CollectionKind = 'collection' | 'wishlist' | 'binder';
 
 export interface SmartBinderRules {
   match:      'all' | 'any';
@@ -59,6 +61,46 @@ export interface MirrorItem {
   added_at: number;
   acquired_price: number | null;  // USD, null = unknown
   acquired_at: number | null;     // epoch ms, null = unknown
+  variant_id: string | null;      // card_variants UUID; null = "any printing"
+  variant_name: string | null;    // Scrydex variant name (display snapshot)
+  condition: string | null;       // NM | LP | MP | HP | DM (raw copies)
+  grader: string | null;          // PSA | CGC | BGS | TAG | ACE (graded copies)
+  grade: string | null;           // '10' | '9.5' | … (graded copies)
+  cert_number: string | null;     // optional graded cert / pop lookup
+}
+
+/**
+ * Per-copy attributes captured when adding a card. A held card is a specific
+ * physical copy: a raw Holo NM and a PSA 10 of the same `card_id` are distinct
+ * entries with distinct values. All fields optional — omitting them (e.g. from
+ * wishlist / binder adds) preserves the legacy "any printing, ungraded" copy.
+ */
+export interface ItemDetails {
+  variantId?: string | null;
+  variantName?: string | null;
+  condition?: string | null;
+  grader?: string | null;
+  grade?: string | null;
+  certNumber?: string | null;
+  // Effective market value for this copy (graded market for a graded copy,
+  // else the selected variant's raw NM price). Snapshotted into card_json so
+  // portfolio totals / sort / filter read the right number without re-fetching.
+  value?: number | null;
+}
+
+/**
+ * Apply a copy's value snapshot onto a base card. Graded copies suppress the
+ * raw 7d/30d trend (it would be misleading). Used at add-time and on re-pull.
+ */
+export function applyCopyValue(base: Card, details: ItemDetails | null | undefined): Card {
+  if (!details) return base;
+  const graded = !!(details.grader && details.grade);
+  if (details.value != null) {
+    return graded
+      ? { ...base, value: details.value, change: 0, trend30d: null }
+      : { ...base, value: details.value };
+  }
+  return graded ? { ...base, change: 0, trend30d: null } : base;
 }
 
 export type GradingStage =
@@ -165,6 +207,33 @@ export async function wipeIfForeignUserData(userId: string): Promise<void> {
   if (foreign) await wipeLocalUserData();
 }
 
+// ─── Batched inserts ─────────────────────────────────────────────────────────
+
+type SqlValue = string | number | null;
+
+/**
+ * Multi-row INSERT in chunks sized to stay under SQLite's bind-variable limit
+ * (999 by default). One statement per chunk instead of one per row — the
+ * sign-in pull repopulates the whole mirror, so this is the hot path.
+ */
+async function insertRows(
+  db: SQLiteDatabase,
+  prefix: string, // e.g. `INSERT INTO t (a, b)` or `INSERT OR REPLACE INTO t (a, b)`
+  columnCount: number,
+  rows: SqlValue[][],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const rowsPerChunk = Math.max(1, Math.floor(900 / columnCount));
+  const placeholderRow = `(${Array(columnCount).fill('?').join(', ')})`;
+  for (let i = 0; i < rows.length; i += rowsPerChunk) {
+    const chunk = rows.slice(i, i + rowsPerChunk);
+    await db.runAsync(
+      `${prefix} VALUES ${Array(chunk.length).fill(placeholderRow).join(', ')}`,
+      chunk.flat(),
+    );
+  }
+}
+
 // ─── Pull from cloud ─────────────────────────────────────────────────────────
 
 /**
@@ -182,24 +251,11 @@ export async function pullCollectionsFromCloud(userId: string): Promise<void> {
 
 async function doPull(userId: string): Promise<void> {
   // 1. Fetch collections + items in two queries.
-  const { data: collections, error: cErr } = await supabase
+  const { data: collectionsData, error: cErr } = await supabase
     .from('collections')
     .select('id, user_id, kind, name, description, tone_start, tone_end, is_public, rules, created_at, updated_at')
     .eq('user_id', userId);
-  // Tolerate older databases without the `rules` column — retry without it.
-  let collectionsData = collections;
-  if (cErr) {
-    if (/column .*rules.* does not exist|schema cache/i.test(cErr.message)) {
-      const retry = await supabase
-        .from('collections')
-        .select('id, user_id, kind, name, description, tone_start, tone_end, is_public, created_at, updated_at')
-        .eq('user_id', userId);
-      if (retry.error) throw new Error(`pull collections: ${retry.error.message}`);
-      collectionsData = retry.data as unknown as typeof collections;
-    } else {
-      throw new Error(`pull collections: ${cErr.message}`);
-    }
-  }
+  if (cErr) throw new Error(`pull collections: ${cErr.message}`);
 
   const collectionIds = (collectionsData ?? []).map(c => (c as { id: string }).id);
 
@@ -212,6 +268,11 @@ async function doPull(userId: string): Promise<void> {
     created_at: string;
     acquired_price: number | null;
     acquired_at: string | null;
+    variant_id: string | null;
+    condition: string | null;
+    grader: string | null;
+    grade: string | null;
+    cert_number: string | null;
     cards: { id: string; name: string; rarity: string | null } | null;
   };
 
@@ -219,7 +280,7 @@ async function doPull(userId: string): Promise<void> {
   if (collectionIds.length > 0) {
     const { data, error: iErr } = await supabase
       .from('collection_items')
-      .select('id, collection_id, card_id, quantity, position, created_at, acquired_price, acquired_at')
+      .select('id, collection_id, card_id, quantity, position, created_at, acquired_price, acquired_at, variant_id, condition, grader, grade, cert_number')
       .in('collection_id', collectionIds);
     if (iErr) throw new Error(`pull items: ${iErr.message}`);
     items = (data ?? []) as ItemRow[];
@@ -260,19 +321,14 @@ async function doPull(userId: string): Promise<void> {
     .from('card_grading_submissions')
     .select('id, user_id, card_id, card_name, card_set, grader, submission_id, stage, submitted_at, returned_at, returned_grade, declared_value, notes, created_at, updated_at')
     .eq('user_id', userId);
-  // Don't fail the whole sync if the grading table doesn't exist yet — just
-  // proceed without grading data. Migration 015 fills it in.
-  const grading: GradingRow[] = gErr
-    ? []
-    : ((gradingData ?? []) as GradingRow[]);
-  if (gErr && !/relation "card_grading_submissions" does not exist|schema cache/i.test(gErr.message)) {
-    throw new Error(`pull grading: ${gErr.message}`);
-  }
+  if (gErr) throw new Error(`pull grading: ${gErr.message}`);
+  const grading: GradingRow[] = (gradingData ?? []) as GradingRow[];
 
-  // 2. Hydrate card_json for items by joining to the cache_cards mirror.
-  // For ids not yet in the cache, fetch a minimal card row and synthesize
-  // a placeholder. This keeps offline reads working before cache_cards is
-  // populated by the search/list flows.
+  // 2. Hydrate card_json for items. First read the local cache_cards mirror;
+  // for ids not in the cache (e.g. a fresh install where the cache is empty)
+  // fetch the real card rows from Supabase so items rehydrate with their true
+  // name / art / value instead of a placeholder. Only ids that can't be found
+  // anywhere fall through to placeholderCard below.
   const db = await getDb();
   const cardIds = [...new Set(items.map(i => i.card_id))];
   const cachedById = new Map<string, Card>();
@@ -286,7 +342,56 @@ async function doPull(userId: string): Promise<void> {
       try {
         cachedById.set(r.card_id, JSON.parse(r.card_json) as Card);
       } catch {
-        // bad cache entry — fall through to placeholder
+        // bad cache entry — fall through to a network fetch / placeholder
+      }
+    }
+
+    // Ids still missing after the local cache read — fetch them from the
+    // `cards` table (the authoritative card metadata source) and seed the
+    // local cache so subsequent reads stay offline-capable.
+    const missing = cardIds.filter(id => !cachedById.has(id));
+    const now = Date.now();
+    for (let i = 0; i < missing.length; i += 100) {
+      const chunk = missing.slice(i, i + 100);
+      const { data, error } = await supabase
+        .from('cards')
+        .select(CARD_SELECT)
+        .in('id', chunk);
+      if (error) {
+        // Non-fatal: leave these ids to placeholderCard. A later card view or
+        // the next pull will backfill them.
+        if (__DEV__) console.warn('[cloud-sync] pull card hydration failed:', error.message);
+        break;
+      }
+      const seedRows: SqlValue[][] = [];
+      for (const raw of (data ?? []) as unknown as SupabaseCardFull[]) {
+        const card = mapRow(raw);
+        cachedById.set(card.id, card);
+        seedRows.push([card.id, JSON.stringify(card), now]);
+      }
+      await insertRows(
+        db,
+        `INSERT OR REPLACE INTO cache_cards (card_id, card_json, fetched_at)`,
+        3,
+        seedRows,
+      );
+    }
+  }
+
+  // 2b. Snapshot prior per-item values so a re-pull on the same device keeps
+  // graded copies' valuations (the cloud has no value column — value lives in
+  // card_json, which we rebuild from cache_cards below). Keyed by item id.
+  const priorValueById = new Map<string, number>();
+  {
+    const prior = await db.getAllAsync<{ id: string; card_json: string }>(
+      `SELECT id, card_json FROM cloud_collection_items`,
+    );
+    for (const r of prior) {
+      try {
+        const v = (JSON.parse(r.card_json) as Card).value;
+        if (typeof v === 'number') priorValueById.set(r.id, v);
+      } catch {
+        // ignore unparseable cache row
       }
     }
   }
@@ -296,18 +401,14 @@ async function doPull(userId: string): Promise<void> {
   // fetching (or stuck offline) means the cloud snapshot we hold is already
   // stale relative to local intent — skip the swap and keep the optimistic
   // mirror; the next pull after the queue drains will reconcile.
-  let swapped = true;
   await db.withTransactionAsync(async () => {
     const undrained = await db.getFirstAsync<{ n: number }>(
       `SELECT COUNT(*) AS n FROM pending_ops WHERE status != 'failed'`,
     );
-    if ((undrained?.n ?? 0) > 0) {
-      swapped = false;
-      return;
-    }
+    if ((undrained?.n ?? 0) > 0) return;
     await db.execAsync(`DELETE FROM cloud_collections; DELETE FROM cloud_collection_items; DELETE FROM cloud_card_sales; DELETE FROM cloud_card_grading;`);
 
-    for (const raw of collectionsData ?? []) {
+    const collectionRows: SqlValue[][] = (collectionsData ?? []).map(raw => {
       const c = raw as {
         id: string;
         user_id: string;
@@ -321,73 +422,93 @@ async function doPull(userId: string): Promise<void> {
         created_at: string;
         updated_at: string;
       };
-      await db.runAsync(
-        `INSERT INTO cloud_collections
-         (id, user_id, kind, name, description, tone_start, tone_end, is_public, rules, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          c.id, c.user_id, c.kind, c.name, c.description,
-          c.tone_start, c.tone_end, c.is_public ? 1 : 0,
-          c.rules ? JSON.stringify(c.rules) : null,
-          new Date(c.created_at).getTime(),
-          new Date(c.updated_at).getTime(),
-        ],
-      );
-    }
+      return [
+        c.id, c.user_id, c.kind, c.name, c.description,
+        c.tone_start, c.tone_end, c.is_public ? 1 : 0,
+        c.rules ? JSON.stringify(c.rules) : null,
+        new Date(c.created_at).getTime(),
+        new Date(c.updated_at).getTime(),
+      ];
+    });
+    await insertRows(
+      db,
+      `INSERT INTO cloud_collections
+       (id, user_id, kind, name, description, tone_start, tone_end, is_public, rules, created_at, updated_at)`,
+      11,
+      collectionRows,
+    );
 
+    const itemRows: SqlValue[][] = [];
     for (const it of items) {
-      const card: Card = cachedById.get(it.card_id) ?? placeholderCard(it.card_id);
-      await db.runAsync(
-        `INSERT INTO cloud_collection_items
-         (id, collection_id, card_id, card_json, quantity, position, added_at, acquired_price, acquired_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          it.id, it.collection_id, it.card_id, JSON.stringify(card),
-          it.quantity, it.position,
-          new Date(it.created_at).getTime(),
-          it.acquired_price,
-          it.acquired_at ? new Date(it.acquired_at).getTime() : null,
-        ],
-      );
+      const base: Card = cachedById.get(it.card_id) ?? placeholderCard(it.card_id);
+      // Re-apply this copy's value snapshot. Raw variant copies recompute from
+      // the cached card's variant prices (cheap, always fresh); graded copies
+      // carry forward the prior local value when known.
+      const graded = !!(it.grader && it.grade);
+      let value: number | null | undefined;
+      if (graded) {
+        value = priorValueById.get(it.id);
+      } else if (it.variant_id) {
+        value = base.variantPrices?.find(v => v.id === it.variant_id)?.price ?? undefined;
+      }
+      const card = applyCopyValue(base, {
+        variantId: it.variant_id, grader: it.grader, grade: it.grade,
+        value: value ?? undefined,
+      });
+      // variant_name is a local display snapshot (not stored cloud-side) —
+      // derive it from the cached card's variant prices.
+      const variantName = it.variant_id
+        ? base.variantPrices?.find(v => v.id === it.variant_id)?.displayName ?? null
+        : null;
+      itemRows.push([
+        it.id, it.collection_id, it.card_id, JSON.stringify(card),
+        it.quantity, it.position,
+        new Date(it.created_at).getTime(),
+        it.acquired_price,
+        it.acquired_at ? new Date(it.acquired_at).getTime() : null,
+        it.variant_id, variantName, it.condition, it.grader, it.grade, it.cert_number,
+      ]);
     }
+    await insertRows(
+      db,
+      `INSERT INTO cloud_collection_items
+       (id, collection_id, card_id, card_json, quantity, position, added_at, acquired_price, acquired_at,
+        variant_id, variant_name, condition, grader, grade, cert_number)`,
+      15,
+      itemRows,
+    );
 
-    for (const s of sales) {
-      await db.runAsync(
-        `INSERT INTO cloud_card_sales
-         (id, user_id, collection_id, card_id, card_name, card_set, cost_basis, sale_price, currency, sold_at, notes, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          s.id, s.user_id, s.collection_id, s.card_id, s.card_name, s.card_set,
-          s.cost_basis, s.sale_price, s.currency,
-          new Date(s.sold_at).getTime(),
-          s.notes,
-          new Date(s.created_at).getTime(),
-        ],
-      );
-    }
+    await insertRows(
+      db,
+      `INSERT INTO cloud_card_sales
+       (id, user_id, collection_id, card_id, card_name, card_set, cost_basis, sale_price, currency, sold_at, notes, created_at)`,
+      12,
+      sales.map(s => [
+        s.id, s.user_id, s.collection_id, s.card_id, s.card_name, s.card_set,
+        s.cost_basis, s.sale_price, s.currency,
+        new Date(s.sold_at).getTime(),
+        s.notes,
+        new Date(s.created_at).getTime(),
+      ]),
+    );
 
-    for (const g of grading) {
-      await db.runAsync(
-        `INSERT INTO cloud_card_grading
-         (id, user_id, card_id, card_name, card_set, grader, submission_id, stage,
-          submitted_at, returned_at, returned_grade, declared_value, notes, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          g.id, g.user_id, g.card_id, g.card_name, g.card_set,
-          g.grader, g.submission_id, g.stage,
-          new Date(g.submitted_at).getTime(),
-          g.returned_at ? new Date(g.returned_at).getTime() : null,
-          g.returned_grade, g.declared_value, g.notes,
-          new Date(g.created_at).getTime(),
-          new Date(g.updated_at).getTime(),
-        ],
-      );
-    }
+    await insertRows(
+      db,
+      `INSERT INTO cloud_card_grading
+       (id, user_id, card_id, card_name, card_set, grader, submission_id, stage,
+        submitted_at, returned_at, returned_grade, declared_value, notes, created_at, updated_at)`,
+      15,
+      grading.map(g => [
+        g.id, g.user_id, g.card_id, g.card_name, g.card_set,
+        g.grader, g.submission_id, g.stage,
+        new Date(g.submitted_at).getTime(),
+        g.returned_at ? new Date(g.returned_at).getTime() : null,
+        g.returned_grade, g.declared_value, g.notes,
+        new Date(g.created_at).getTime(),
+        new Date(g.updated_at).getTime(),
+      ]),
+    );
   });
-  if (!swapped) return;
-
-  // 4. Drop legacy tables now that cloud state is mirrored locally.
-  await dropLegacyUserTables();
 }
 
 function placeholderCard(cardId: string): Card {
@@ -416,10 +537,11 @@ export type PendingOp =
   | { op_type: 'create_collection'; payload: { id: string; kind: CollectionKind; name: string; tone_start?: string | null; tone_end?: string | null; is_public?: boolean } }
   | { op_type: 'delete_collection'; payload: { id: string } }
   | { op_type: 'rename_collection'; payload: { id: string; name: string } }
-  | { op_type: 'add_item';          payload: { id: string; collection_id: string; card_id: string; quantity?: number; position?: number } }
+  | { op_type: 'add_item';          payload: { id: string; collection_id: string; card_id: string; quantity?: number; position?: number; variant_id?: string | null; condition?: string | null; grader?: string | null; grade?: string | null; cert_number?: string | null } }
   | { op_type: 'remove_item';       payload: { id: string } }
   | { op_type: 'remove_item_by_card'; payload: { collection_id: string; card_id: string } }
   | { op_type: 'set_cost_basis';    payload: { collection_id: string; card_id: string; acquired_price: number | null; acquired_at: string | null } }
+  | { op_type: 'set_cost_basis_by_id'; payload: { id: string; acquired_price: number | null; acquired_at: string | null } }
   | { op_type: 'record_sale';       payload: { id: string; collection_id: string | null; card_id: string; card_name: string; card_set: string | null; cost_basis: number | null; sale_price: number; sold_at: string } }
   | { op_type: 'set_collection_visibility'; payload: { id: string; is_public: boolean } }
   | { op_type: 'upsert_grading';    payload: GradingUpsertPayload }
@@ -638,46 +760,77 @@ export async function setCollectionVisibility(id: string, isPublic: boolean): Pr
 }
 
 /**
- * Add a card to a collection. Idempotent at the (collection_id, card_id)
- * level — if the card is already there nothing happens. Returns the
- * resulting mirror row (existing or new).
+ * Add a card to a collection as a specific physical copy. Idempotency is keyed
+ * on the full tuple (collection_id, card_id, variant_id, condition, grader,
+ * grade) — adding an *identical* copy is a no-op, but a different variant or
+ * grade creates a new row (multiple distinct copies are supported). Passing no
+ * `details` (e.g. wishlist / binder adds) preserves the legacy one-per-card,
+ * "any printing, ungraded" behavior. Returns the resulting mirror row, or null
+ * when the identical copy already exists. The chosen value is snapshotted into
+ * card_json so portfolio totals reflect the actual copy held.
  */
 export async function addItemToCollection(
   collectionId: string,
   card: Card,
+  details?: ItemDetails,
   position = 0,
 ): Promise<MirrorItem | null> {
   const db = await getDb();
+  const variantId  = details?.variantId ?? null;
+  const variantName = details?.variantName ?? null;
+  const condition  = details?.condition ?? null;
+  const grader     = details?.grader ?? null;
+  const grade      = details?.grade ?? null;
+  const certNumber = details?.certNumber ?? null;
+
   const existing = await db.getFirstAsync<{ id: string }>(
-    `SELECT id FROM cloud_collection_items WHERE collection_id = ? AND card_id = ?`,
-    [collectionId, card.id],
+    `SELECT id FROM cloud_collection_items
+      WHERE collection_id = ? AND card_id = ?
+        AND IFNULL(variant_id, '') = IFNULL(?, '')
+        AND IFNULL(condition, '')  = IFNULL(?, '')
+        AND IFNULL(grader, '')     = IFNULL(?, '')
+        AND IFNULL(grade, '')      = IFNULL(?, '')`,
+    [collectionId, card.id, variantId, condition, grader, grade],
   );
-  if (existing) return null; // no-op
+  if (existing) return null; // no-op — identical copy already held
 
   const id = uuidv4();
   const now = Date.now();
+  const snapshot = applyCopyValue(card, details);
+  const cardJson = JSON.stringify(snapshot);
   await db.runAsync(
     `INSERT INTO cloud_collection_items
-     (id, collection_id, card_id, card_json, quantity, position, added_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [id, collectionId, card.id, JSON.stringify(card), 1, position, now],
+     (id, collection_id, card_id, card_json, quantity, position, added_at,
+      variant_id, variant_name, condition, grader, grade, cert_number)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, collectionId, card.id, cardJson, 1, position, now,
+     variantId, variantName, condition, grader, grade, certNumber],
   );
 
   await enqueue({
     op_type: 'add_item',
-    payload: { id, collection_id: collectionId, card_id: card.id, position },
+    payload: {
+      id, collection_id: collectionId, card_id: card.id, position,
+      variant_id: variantId, condition, grader, grade, cert_number: certNumber,
+    },
   });
 
   return {
     id,
     collection_id: collectionId,
     card_id: card.id,
-    card_json: JSON.stringify(card),
+    card_json: cardJson,
     quantity: 1,
     position,
     added_at: now,
     acquired_price: null,
     acquired_at: null,
+    variant_id: variantId,
+    variant_name: variantName,
+    condition,
+    grader,
+    grade,
+    cert_number: certNumber,
   };
 }
 
@@ -694,6 +847,14 @@ export async function removeItemFromCollectionByCard(
     op_type: 'remove_item_by_card',
     payload: { collection_id: collectionId, card_id: cardId },
   });
+}
+
+/** Remove a single copy by its item id. Use when multiple copies of the same
+ *  card may be held and only one should be removed. */
+export async function removeItemById(itemId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM cloud_collection_items WHERE id = ?`, [itemId]);
+  await enqueue({ op_type: 'remove_item', payload: { id: itemId } });
 }
 
 /**
@@ -721,6 +882,28 @@ export async function setItemCostBasis(
       card_id: cardId,
       acquired_price: acquiredPrice,
       // acquired_price is numeric, acquired_at is date — keep ISO string in cloud.
+      acquired_at: acquiredAt ? new Date(acquiredAt).toISOString().slice(0, 10) : null,
+    },
+  });
+}
+
+/** Set/clear cost basis for a single copy by its item id (copy-aware variant
+ *  of setItemCostBasis). */
+export async function setItemCostBasisById(
+  itemId: string,
+  acquiredPrice: number | null,
+  acquiredAt: number | null,
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE cloud_collection_items SET acquired_price = ?, acquired_at = ? WHERE id = ?`,
+    [acquiredPrice, acquiredAt, itemId],
+  );
+  await enqueue({
+    op_type: 'set_cost_basis_by_id',
+    payload: {
+      id: itemId,
+      acquired_price: acquiredPrice,
       acquired_at: acquiredAt ? new Date(acquiredAt).toISOString().slice(0, 10) : null,
     },
   });
@@ -781,6 +964,55 @@ export async function recordSaleAndRemove(
     op_type: 'remove_item_by_card',
     payload: { collection_id: collectionId, card_id: card.id },
   });
+}
+
+/**
+ * Copy-aware sale: record a realized sale for a single copy (by item id) and
+ * remove just that copy. cost_basis is snapshotted from the item row.
+ */
+export async function recordSaleAndRemoveById(
+  userId: string,
+  itemId: string,
+  card: Card,
+  salePrice: number,
+  soldAtMs: number = Date.now(),
+): Promise<void> {
+  const db = await getDb();
+  const id = uuidv4();
+
+  const row = await db.getFirstAsync<{ collection_id: string; acquired_price: number | null }>(
+    `SELECT collection_id, acquired_price FROM cloud_collection_items WHERE id = ?`,
+    [itemId],
+  );
+  if (!row) return; // copy already gone
+  const costBasis = row.acquired_price ?? null;
+
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `INSERT INTO cloud_card_sales
+       (id, user_id, collection_id, card_id, card_name, card_set, cost_basis,
+        sale_price, currency, sold_at, notes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, userId, row.collection_id, card.id, card.name, card.set || null,
+       costBasis, salePrice, 'USD', soldAtMs, null, Date.now()],
+    );
+    await db.runAsync(`DELETE FROM cloud_collection_items WHERE id = ?`, [itemId]);
+  });
+
+  await enqueue({
+    op_type: 'record_sale',
+    payload: {
+      id,
+      collection_id: row.collection_id,
+      card_id: card.id,
+      card_name: card.name,
+      card_set: card.set || null,
+      cost_basis: costBasis,
+      sale_price: salePrice,
+      sold_at: new Date(soldAtMs).toISOString(),
+    },
+  });
+  await enqueue({ op_type: 'remove_item', payload: { id: itemId } });
 }
 
 // ─── Flusher ─────────────────────────────────────────────────────────────────
@@ -974,13 +1206,18 @@ async function applyOpToCloud(opType: string, payload: Record<string, unknown>):
       return;
     }
     case 'add_item': {
-      const p = payload as { id: string; collection_id: string; card_id: string; position?: number };
+      const p = payload as { id: string; collection_id: string; card_id: string; position?: number; variant_id?: string | null; condition?: string | null; grader?: string | null; grade?: string | null; cert_number?: string | null };
       const { error } = await supabase.from('collection_items').upsert({
         id:            p.id,
         collection_id: p.collection_id,
         card_id:       p.card_id,
         quantity:      1,
         position:      p.position ?? 0,
+        variant_id:    p.variant_id ?? null,
+        condition:     p.condition ?? null,
+        grader:        p.grader ?? null,
+        grade:         p.grade ?? null,
+        cert_number:   p.cert_number ?? null,
       }, { onConflict: 'id' });
       if (error) throw new Error(error.message);
       return;
@@ -1011,6 +1248,15 @@ async function applyOpToCloud(opType: string, payload: Record<string, unknown>):
         })
         .eq('collection_id', p.collection_id)
         .eq('card_id', p.card_id);
+      if (error) throw new Error(error.message);
+      return;
+    }
+    case 'set_cost_basis_by_id': {
+      const p = payload as { id: string; acquired_price: number | null; acquired_at: string | null };
+      const { error } = await supabase
+        .from('collection_items')
+        .update({ acquired_price: p.acquired_price, acquired_at: p.acquired_at })
+        .eq('id', p.id);
       if (error) throw new Error(error.message);
       return;
     }

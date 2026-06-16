@@ -11,7 +11,11 @@ export interface GradedOption {
   grade: string;                // '10' | '9.5' | '9' | …
   market: number | null;
   label: string;                // e.g. 'PSA 10'
+  count: number;                // # of sold listings behind this tuple (sales volume)
 }
+
+// Canonical raw-condition display order (best → worst).
+export const CONDITION_ORDER = ['NM', 'LP', 'MP', 'HP', 'DM'] as const;
 
 export interface CardPricing {
   price_usd: number | null;
@@ -29,9 +33,10 @@ export interface CardPricing {
   max_1y: number | null;
   min_all_time: number | null;
   max_all_time: number | null;
-  price_history: number[];          // ascending chronological NM market values
+  price_history: number[];          // ascending chronological market values for the selected condition
   price_history_dates: string[];    // matching ISO dates (YYYY-MM-DD)
   graded_options: GradedOption[];   // available graded prices for this card
+  available_conditions: string[];   // raw conditions that have data for this variant (NM, LP, …)
   not_found: boolean;
 }
 
@@ -52,6 +57,7 @@ const NULL_PRICING: CardPricing = {
   price_history: [],
   price_history_dates: [],
   graded_options: [],
+  available_conditions: [],
   not_found: false,
 };
 
@@ -59,6 +65,7 @@ export interface PricingQuery {
   type?: 'raw' | 'graded';
   grader?: string;
   grade?: string;
+  condition?: string;   // raw condition to price — defaults to 'NM'
 }
 
 export async function getCardPricing(
@@ -67,6 +74,7 @@ export async function getCardPricing(
   query: PricingQuery = {},
 ): Promise<CardPricing> {
   const type = query.type ?? 'raw';
+  const condition = query.condition ?? 'NM';
 
   // Graded path lives in card_listings — Scrydex doesn't expose grader/grade
   // through the prices include, only through /cards/{id}/listings. Hand off.
@@ -101,16 +109,38 @@ export async function getCardPricing(
     resolvedVariantId = (firstPrice as { variant_id: string }).variant_id;
   }
 
+  // ── Available conditions ───────────────────────────────────────────────────
+  // Which raw conditions have a current price for this variant, so the UI can
+  // offer a condition switcher (NM default) only when alternatives exist.
+  const { data: condRows } = await supabase
+    .from('card_prices_current')
+    .select('condition')
+    .eq('variant_id', resolvedVariantId)
+    .eq('type', 'raw');
+
+  const presentConditions = new Set(
+    ((condRows ?? []) as { condition: string | null }[])
+      .map(r => r.condition)
+      .filter((c): c is string => !!c),
+  );
+  const availableConditions = CONDITION_ORDER.filter(c => presentConditions.has(c));
+
   // ── Current price ──────────────────────────────────────────────────────────
   const { data: prices } = await supabase
     .from('card_prices_current')
     .select('market, trend_7d_pct, trend_30d_pct, trend_90d_pct')
     .eq('variant_id', resolvedVariantId)
     .eq('type', 'raw')
-    .eq('condition', 'NM')
+    .eq('condition', condition)
     .maybeSingle();
 
-  if (!prices) return { ...NULL_PRICING, graded_options: await listGradedOptions(cardId) };
+  if (!prices) {
+    return {
+      ...NULL_PRICING,
+      available_conditions: availableConditions,
+      graded_options: await listGradedOptions(cardId),
+    };
+  }
 
   const p = prices as {
     market: number | null;
@@ -125,7 +155,7 @@ export async function getCardPricing(
     .select('market, snapshot_date')
     .eq('variant_id', resolvedVariantId)
     .eq('type', 'raw')
-    .eq('condition', 'NM')
+    .eq('condition', condition)
     .order('snapshot_date', { ascending: true });
 
   const validHistory = (history ?? [])
@@ -168,6 +198,7 @@ export async function getCardPricing(
     price_history:       priceHistory,
     price_history_dates: priceHistoryDates,
     graded_options:      await listGradedOptions(cardId),
+    available_conditions: availableConditions,
     not_found:           false,
   };
 }
@@ -201,13 +232,18 @@ export async function listGradedOptions(cardId: string): Promise<GradedOption[]>
   const byKey = new Map<string, GradedOption>();
   for (const r of data as Row[]) {
     const key = `${r.variant}|${r.company}|${r.grade}`;
-    if (byKey.has(key)) continue;       // rows are sold_at desc; first hit = latest
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.count += 1;              // rows are sold_at desc; market already set to latest
+      continue;
+    }
     byKey.set(key, {
       variant: r.variant,
       grader:  r.company,
       grade:   r.grade,
       market:  r.price,
       label:   `${r.company} ${r.grade}`,
+      count:   1,
     });
   }
 
@@ -281,6 +317,7 @@ async function getGradedPricing(
     price_history:       prices,
     price_history_dates: dates,
     graded_options:      await listGradedOptions(cardId),
+    available_conditions: [],
     not_found:           false,
   };
 }
@@ -311,6 +348,19 @@ export function sliceHistoryForRange(history: number[], range: string): number[]
   const days = RANGE_DAYS[range] ?? history.length;
   const n = days === Infinity ? history.length : Math.min(days, history.length);
   return history.slice(-n);
+}
+
+// Slice value + date series together so the scrubbable chart can show the price
+// and the date it was recorded. Arrays stay index-aligned.
+export function sliceSeriesForRange(
+  history: number[],
+  dates: string[],
+  range: string,
+): { values: number[]; dates: string[] } {
+  if (history.length < 2) return { values: [], dates: [] };
+  const days = RANGE_DAYS[range] ?? history.length;
+  const n = days === Infinity ? history.length : Math.min(days, history.length);
+  return { values: history.slice(-n), dates: dates.slice(-n) };
 }
 
 export function changForRange(

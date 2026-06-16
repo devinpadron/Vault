@@ -25,24 +25,30 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Card3D } from '@/components/cards/Card3D';
 import { PriceChart, Range } from '@/components/charts/PriceChart';
+import { BarList } from '@/components/charts/BarList';
 import { Icon } from '@/components/ui/Icon';
+import { Expandable } from '@/components/ui/Expandable';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
-import { useCard, useCardPricing } from '@/lib/api/cards';
-import { sliceHistoryForRange, changForRange, avgForRange, GradedOption } from '@/lib/api/pricing';
+import { useCard, useCardPricing, useCardPopReports } from '@/lib/api/cards';
+import { PopReport } from '@/lib/api/pop-reports';
+import { sliceSeriesForRange, changForRange, avgForRange, GradedOption } from '@/lib/api/pricing';
 import { formatVariantName } from '@/lib/api/types';
 import { useBinders, useAddCardToBinder, useCreateBinder } from '@/lib/api/binders';
 import {
-  useIsInCollection,
+  useCollectionCopies,
   useAddToCollection,
-  useRemoveFromCollection,
-  useCardCostBasis,
-  useUpdateCostBasis,
-  useSellCard,
+  useRemoveItem,
+  useUpdateCopyCostBasis,
+  useSellCopy,
 } from '@/lib/db/collection';
+import { CollectionEntry } from '@/lib/filters/collection';
+import { copyLabel } from '@/lib/grading/constants';
+import { AddToCollectionSheet } from '@/components/cards/AddToCollectionSheet';
 import { useIsWishlisted, useAddToWishlist, useRemoveFromWishlist } from '@/lib/db/wishlist';
 import { fmt } from '@/lib/format';
+import { haptic } from '@/lib/haptics';
 import { TONE_PAIRS } from '@/lib/binder-tones';
-import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, Gradients, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 import { Card, CardVariants, cardBaseName, cardNameVariant } from '@/types';
 
 // Compact notation for matrix cells where horizontal space is tight.
@@ -112,6 +118,51 @@ function GradeMatrix({ options }: { options: GradedOption[] }) {
   );
 }
 
+// Real PSA population (census) data — how many copies exist at each grade.
+// Sourced from Scrydex include=pop_reports (card_pop_reports). Collapsed by default.
+function PopReportBox({ report }: { report: PopReport | undefined }) {
+  if (!report || report.grades.length === 0) return null;
+  const total = report.totalGraded ?? report.grades.reduce((s, g) => s + g.count, 0);
+  // Show the whole-grade ladder (10…1) for a clean chart; half grades,
+  // qualifiers (e.g. "9Q") and "auth" stay folded into the census total.
+  const wholeGrades = report.grades.filter(g => /^\d+$/.test(g.grade));
+  const shown = wholeGrades.length > 0 ? wholeGrades : report.grades;
+  const bars = shown.map(g => ({ label: `${report.grader} ${g.grade}`, value: g.count }));
+  return (
+    <Expandable title={`${report.grader} Population`} subtitle={`${total.toLocaleString()} graded`}>
+      <BarList bars={bars} />
+      <Text style={styles.boxFootnote}>
+        {report.grader} census · {formatVariantName(report.variantName ?? '')} · as of {report.snapshotDate}
+      </Text>
+    </Expandable>
+  );
+}
+
+// Sales-volume by grade — count of sold listings on record per company+grade.
+// This is liquidity ("how often each grade trades"), distinct from population.
+function SalesVolumeBox({ options }: { options: GradedOption[] }) {
+  const rows = [...options]
+    .filter(o => o.count > 0)
+    .sort((a, b) => b.count - a.count || parseFloat(b.grade) - parseFloat(a.grade));
+  if (rows.length === 0) return null;
+  const total = rows.reduce((s, o) => s + o.count, 0);
+  const bars = rows.map(o => ({ label: o.label, value: o.count }));
+  return (
+    <Expandable title="Sales Volume" subtitle={`${total} sold on record`}>
+      <BarList bars={bars} />
+    </Expandable>
+  );
+}
+
+// Pick the PSA population report matching a specific variant; fall back to any
+// PSA report for the card so the box still shows when coverage is variant-sparse.
+function pickPop(reports: PopReport[], variantName: string | null | undefined): PopReport | undefined {
+  if (reports.length === 0) return undefined;
+  const psa = reports.filter(r => r.grader === 'PSA');
+  const pool = psa.length > 0 ? psa : reports;
+  return pool.find(r => r.variantName === variantName) ?? pool[0];
+}
+
 // Renders one chip per active variant. Skips 'normal' (no badge needed).
 function VariantChips({ variants }: { variants?: CardVariants }) {
   const shimmer = useSharedValue(0);
@@ -138,7 +189,7 @@ function VariantChips({ variants }: { variants?: CardVariants }) {
       )}
       {variants.reverse && (
         <LinearGradient
-          colors={['#7A6BFF', '#5FD2FF', '#FF7AE0']}
+          colors={Gradients.reverseHolo}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.chipRevBorder}
@@ -304,6 +355,7 @@ export default function CardDetailScreen() {
   const [selectedVariantId, setSelectedVariantId] = useState<string | undefined>(undefined);
   const [priceMode, setPriceMode] = useState<'raw' | 'graded'>('raw');
   const [selectedGradedVariant, setSelectedGradedVariant] = useState<string | null>(null);
+  const [condition, setCondition] = useState('NM');
 
   const {
     data: card,
@@ -317,8 +369,24 @@ export default function CardDetailScreen() {
   // Pricing always queries Raw; graded uses the gradedOptions matrix and
   // doesn't need a per-grade fetch — the table shows every grade at once.
   const activeVariantId = selectedVariantId ?? card?.variantPrices?.[0]?.id;
-  const { data: pricing } = useCardPricing(card, activeVariantId);
+  const { data: pricing } = useCardPricing(card, activeVariantId, { condition });
+  const { data: popReports = [] } = useCardPopReports(card);
   const gradedOptions = useMemo(() => pricing?.graded_options ?? [], [pricing?.graded_options]);
+  const availableConditions = useMemo(
+    () => pricing?.available_conditions ?? [],
+    [pricing?.available_conditions],
+  );
+
+  // Reset to NM when switching to a variant that lacks the current condition.
+  useEffect(() => {
+    if (
+      condition !== 'NM' &&
+      availableConditions.length > 0 &&
+      !availableConditions.includes(condition)
+    ) {
+      setCondition('NM');
+    }
+  }, [availableConditions, condition]);
 
   // Each card_listings row is tied to one Scrydex variant ("holofoil",
   // "reverseHolofoil", …). Graded prices for the same grade can differ across
@@ -348,26 +416,31 @@ export default function CardDetailScreen() {
     [gradedOptions, selectedGradedVariant],
   );
 
-  const priceHistory = sliceHistoryForRange(pricing?.price_history ?? [], range);
+  const { values: priceHistory, dates: priceDates } = sliceSeriesForRange(
+    pricing?.price_history ?? [],
+    pricing?.price_history_dates ?? [],
+    range,
+  );
   const { data: binders = [] } = useBinders();
   const addCardToBinder = useAddCardToBinder();
   const createBinder = useCreateBinder();
-  const { data: isInCollection = false } = useIsInCollection(card?.id ?? '');
+  const { data: copies = [] } = useCollectionCopies(card?.id ?? '');
+  const isInCollection = copies.length > 0;
   const addToCollection = useAddToCollection();
-  const removeFromCollection = useRemoveFromCollection();
-  const { data: costBasis = null } = useCardCostBasis(card?.id ?? '');
-  const updateCostBasis = useUpdateCostBasis();
-  const sellCard = useSellCard();
+  const removeItem = useRemoveItem();
+  const updateCopyCostBasis = useUpdateCopyCostBasis();
+  const sellCopy = useSellCopy();
   const { data: isWishlisted = false } = useIsWishlisted(card?.id ?? '');
   const addToWishlist = useAddToWishlist();
   const removeFromWishlist = useRemoveFromWishlist();
 
-  // Sold-vs-removed sheet + cost-basis editor state
-  const [removeSheetOpen, setRemoveSheetOpen]       = useState(false);
-  const [sellStage, setSellStage]                   = useState<'choose' | 'price'>('choose');
-  const [salePriceInput, setSalePriceInput]         = useState('');
-  const [costBasisSheetOpen, setCostBasisSheetOpen] = useState(false);
-  const [costBasisInput, setCostBasisInput]         = useState('');
+  // Add-copy sheet + per-copy manage / sell / cost-basis editor state.
+  const [addSheetOpen, setAddSheetOpen]       = useState(false);
+  const [manageSheetOpen, setManageSheetOpen] = useState(false);
+  const [sellTarget, setSellTarget]           = useState<CollectionEntry | null>(null);
+  const [salePriceInput, setSalePriceInput]   = useState('');
+  const [basisTarget, setBasisTarget]         = useState<CollectionEntry | null>(null);
+  const [costBasisInput, setCostBasisInput]   = useState('');
 
   function openSheet() {
     setNewBinderMode(false);
@@ -432,6 +505,9 @@ export default function CardDetailScreen() {
   const { value: changeValue, label: changeLabel } = changForRange(pricing, range);
   const { value: avgValue,    label: avgLabel    } = avgForRange(pricing, range);
 
+  // Population is graded-only — it follows the selected graded variant.
+  const activePop = pickPop(popReports, selectedGradedVariant);
+
   return (
     <View style={styles.root}>
       <ScrollView
@@ -447,9 +523,11 @@ export default function CardDetailScreen() {
           <View style={styles.navActions}>
             <TouchableOpacity
               style={[styles.navBtn, isWishlisted && styles.navBtnActive]}
-              onPress={() =>
-                isWishlisted ? removeFromWishlist(card.id) : addToWishlist(card)
-              }
+              onPress={() => {
+                haptic(isWishlisted ? 'select' : 'medium');
+                if (isWishlisted) removeFromWishlist(card.id);
+                else addToWishlist(card);
+              }}
               accessibilityRole="button"
               accessibilityLabel={isWishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
             >
@@ -551,12 +629,43 @@ export default function CardDetailScreen() {
           </ScrollView>
         )}
 
+        {/* Raw: condition switcher — NM default, shown only when others exist */}
+        {priceMode === 'raw' && availableConditions.length > 1 && (
+          <View style={styles.conditionRow}>
+            <Text style={styles.conditionLabel}>Condition</Text>
+            <View style={styles.conditionPills}>
+              {availableConditions.map(c => {
+                const isActive = c === condition;
+                return (
+                  <TouchableOpacity
+                    key={c}
+                    style={[styles.conditionPill, isActive && styles.conditionPillActive]}
+                    onPress={() => {
+                      haptic('select');
+                      setCondition(c);
+                    }}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Show ${c} prices`}
+                  >
+                    <Text style={[styles.conditionPillText, isActive && styles.conditionPillTextActive]}>
+                      {c}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
         {/* Price module — Raw has chart, Graded has a grade × company matrix */}
         {priceMode === 'raw' ? (
           <View style={[styles.panel, { marginBottom: 16 }]}>
             <View style={styles.priceHeader}>
               <View>
-                <Text style={styles.panelLabel}>Market Price</Text>
+                <Text style={styles.panelLabel}>
+                  Market Price{condition !== 'NM' ? ` · ${condition}` : ''}
+                </Text>
                 {price != null ? (
                   <View style={styles.priceValue}>
                     <Text style={styles.priceDollar}>$</Text>
@@ -590,7 +699,7 @@ export default function CardDetailScreen() {
               </View>
             </View>
 
-            <PriceChart data={priceHistory} range={range} onRangeChange={setRange} />
+            <PriceChart data={priceHistory} dates={priceDates} range={range} onRangeChange={setRange} />
           </View>
         ) : (
           <View style={[styles.panel, { marginBottom: 16 }]}>
@@ -632,6 +741,18 @@ export default function CardDetailScreen() {
           </View>
         )}
 
+        {/* Insight boxes — graded only: real PSA population + graded sales volume */}
+        {priceMode === 'graded' && (() => {
+          const showVolume = filteredGradedOptions.some(o => o.count > 0);
+          if (!activePop && !showVolume) return null;
+          return (
+            <View style={styles.insightWrap}>
+              <PopReportBox report={activePop} />
+              {showVolume && <SalesVolumeBox options={filteredGradedOptions} />}
+            </View>
+          );
+        })()}
+
         {/* Card info */}
         <View style={[styles.metaPanel, { marginBottom: 16 }]}>
           <Text style={styles.metaHeader}>Card Info</Text>
@@ -657,19 +778,14 @@ export default function CardDetailScreen() {
           <TouchableOpacity
             style={[styles.ctaSecondary, isInCollection && styles.ctaSecondaryActive]}
             onPress={() => {
-              if (isInCollection) {
-                setSellStage('choose');
-                setSalePriceInput(price != null && price > 0 ? price.toFixed(2) : '');
-                setRemoveSheetOpen(true);
-              } else {
-                addToCollection(card);
-              }
+              if (isInCollection) setManageSheetOpen(true);
+              else setAddSheetOpen(true);
             }}
-            accessibilityLabel={isInCollection ? 'Remove from collection' : 'Add to collection'}
+            accessibilityLabel={isInCollection ? 'Manage your copies' : 'Add to collection'}
             accessibilityRole="button"
           >
             <Text style={[styles.ctaSecondaryText, isInCollection && styles.ctaSecondaryActiveText]}>
-              {isInCollection ? 'In collection ✓' : 'Add to collection'}
+              {isInCollection ? `In collection (${copies.length}) ✓` : 'Add to collection'}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -682,36 +798,7 @@ export default function CardDetailScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Cost basis row — only visible when card is in the collection. */}
-        {isInCollection && (
-          <TouchableOpacity
-            style={styles.basisRow}
-            onPress={() => {
-              setCostBasisInput(costBasis != null ? costBasis.toFixed(2) : '');
-              setCostBasisSheetOpen(true);
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={costBasis != null ? 'Edit cost basis' : 'Set cost basis'}
-          >
-            <Text style={styles.basisLabel}>
-              {costBasis != null ? 'PAID' : 'COST BASIS'}
-            </Text>
-            <Text style={styles.basisValue}>
-              {costBasis != null ? `$${fmt(costBasis)}` : 'Set what you paid'}
-            </Text>
-            {costBasis != null && price != null && price > 0 && (
-              <Text
-                style={[
-                  styles.basisDelta,
-                  { color: price - costBasis >= 0 ? Colors.up : Colors.down },
-                ]}
-              >
-                {price - costBasis >= 0 ? '+' : '−'}${fmt(Math.abs(price - costBasis))}
-              </Text>
-            )}
-            <Icon name="chevron-right" size={14} color={Colors.text3} />
-          </TouchableOpacity>
-        )}
+        {/* Cost basis is tracked per copy — managed in the "In collection" sheet. */}
       </ScrollView>
 
       {/* Add to Binder sheet */}
@@ -814,12 +901,121 @@ export default function CardDetailScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Cost basis editor */}
+      {/* Add a specific copy (variant + condition + optional grade) */}
+      <AddToCollectionSheet
+        visible={addSheetOpen}
+        card={card}
+        gradedOptions={gradedOptions}
+        onClose={() => setAddSheetOpen(false)}
+        onAdd={(details) => addToCollection(card, details)}
+      />
+
+      {/* Manage held copies */}
       <Modal
-        visible={costBasisSheetOpen}
+        visible={manageSheetOpen}
         transparent
         animationType="slide"
-        onRequestClose={() => setCostBasisSheetOpen(false)}
+        onRequestClose={() => setManageSheetOpen(false)}
+        statusBarTranslucent
+      >
+        <View style={{ flex: 1 }}>
+          <TouchableOpacity
+            style={styles.backdrop}
+            activeOpacity={1}
+            onPress={() => setManageSheetOpen(false)}
+          />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={styles.sheetGrabber} />
+            <Text style={styles.sheetEyebrow}>In collection</Text>
+            <Text style={styles.sheetTitle}>
+              Your {copies.length === 1 ? 'copy' : `copies (${copies.length})`}
+            </Text>
+
+            <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
+              {copies.map((entry) => {
+                const label = copyLabel(entry) ?? 'Ungraded';
+                return (
+                  <TouchableOpacity
+                    key={entry.item_id}
+                    style={styles.copyRow}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      setCostBasisInput(
+                        entry.acquired_price != null ? entry.acquired_price.toFixed(2) : '',
+                      );
+                      setBasisTarget(entry);
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.copyLabelText}>{label}</Text>
+                      <Text style={styles.copySub}>
+                        {entry.card.value > 0 ? `$${fmt(entry.card.value)}` : '—'}
+                        {entry.acquired_price != null ? `  ·  paid $${fmt(entry.acquired_price)}` : ''}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.copyActionBtn}
+                      onPress={() => {
+                        setSalePriceInput(
+                          entry.card.value > 0 ? entry.card.value.toFixed(2) : '',
+                        );
+                        setSellTarget(entry);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Sell this copy"
+                    >
+                      <Text style={styles.copyActionText}>Sell</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.copyActionBtn}
+                      onPress={() => {
+                        Alert.alert(
+                          'Remove copy',
+                          `Remove this ${label} copy from your collection?`,
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                              text: 'Remove',
+                              style: 'destructive',
+                              onPress: async () => {
+                                await removeItem(entry.item_id, card.id);
+                                if (copies.length <= 1) setManageSheetOpen(false);
+                              },
+                            },
+                          ],
+                        );
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove this copy"
+                    >
+                      <Text style={styles.copyRemoveText}>Remove</Text>
+                    </TouchableOpacity>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={styles.addAnotherBtn}
+              onPress={() => {
+                setManageSheetOpen(false);
+                setAddSheetOpen(true);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Add another copy"
+            >
+              <Text style={styles.addAnotherText}>+ Add another copy</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Per-copy cost basis editor */}
+      <Modal
+        visible={basisTarget != null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setBasisTarget(null)}
         statusBarTranslucent
       >
         <KeyboardAvoidingView
@@ -829,11 +1025,13 @@ export default function CardDetailScreen() {
           <TouchableOpacity
             style={styles.backdrop}
             activeOpacity={1}
-            onPress={() => setCostBasisSheetOpen(false)}
+            onPress={() => setBasisTarget(null)}
           />
           <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
             <View style={styles.sheetGrabber} />
-            <Text style={styles.sheetEyebrow}>Cost basis</Text>
+            <Text style={styles.sheetEyebrow}>
+              Cost basis · {basisTarget ? (copyLabel(basisTarget) ?? 'Ungraded') : ''}
+            </Text>
             <Text style={styles.sheetTitle}>What did you pay?</Text>
             <Text style={styles.basisHelper}>
               Used to track unrealized and realized P/L. Leave blank to clear.
@@ -854,14 +1052,17 @@ export default function CardDetailScreen() {
             <TouchableOpacity
               style={styles.createBtn}
               onPress={async () => {
+                if (!basisTarget) return;
                 const trimmed = costBasisInput.trim();
                 const value = trimmed === '' ? null : Number(trimmed);
                 if (value != null && (!Number.isFinite(value) || value < 0)) {
                   Alert.alert('Invalid amount', 'Enter a positive dollar amount or leave blank.');
                   return;
                 }
-                await updateCostBasis(card.id, value, value != null ? Date.now() : null);
-                setCostBasisSheetOpen(false);
+                await updateCopyCostBasis(
+                  basisTarget.item_id, card.id, value, value != null ? Date.now() : null,
+                );
+                setBasisTarget(null);
               }}
             >
               <Text style={styles.createBtnText}>Save</Text>
@@ -870,12 +1071,12 @@ export default function CardDetailScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Sold vs just-removed prompt */}
+      {/* Per-copy sale price */}
       <Modal
-        visible={removeSheetOpen}
+        visible={sellTarget != null}
         transparent
         animationType="slide"
-        onRequestClose={() => setRemoveSheetOpen(false)}
+        onRequestClose={() => setSellTarget(null)}
         statusBarTranslucent
       >
         <KeyboardAvoidingView
@@ -885,81 +1086,48 @@ export default function CardDetailScreen() {
           <TouchableOpacity
             style={styles.backdrop}
             activeOpacity={1}
-            onPress={() => setRemoveSheetOpen(false)}
+            onPress={() => setSellTarget(null)}
           />
           <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
             <View style={styles.sheetGrabber} />
-
-            {sellStage === 'choose' ? (
-              <>
-                <Text style={styles.sheetEyebrow}>Remove from collection</Text>
-                <Text style={styles.sheetTitle}>Did you sell it?</Text>
-                <Text style={styles.basisHelper}>
-                  Recording a sale captures realized P/L. &ldquo;Just remove&rdquo; deletes
-                  silently with no impact on your portfolio history.
-                </Text>
-                <TouchableOpacity
-                  style={styles.removeOptionPrimary}
-                  onPress={() => setSellStage('price')}
-                  accessibilityRole="button"
-                  accessibilityLabel="Mark as sold"
-                >
-                  <Text style={styles.removeOptionPrimaryText}>Sold — record sale</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.removeOptionSecondary}
-                  onPress={async () => {
-                    await removeFromCollection(card.id);
-                    setRemoveSheetOpen(false);
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Just remove"
-                >
-                  <Text style={styles.removeOptionSecondaryText}>Just remove</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                <TouchableOpacity style={styles.backRow} onPress={() => setSellStage('choose')}>
-                  <Icon name="chevron-left" size={14} color={Colors.text3} />
-                  <Text style={styles.backLabel}>Back</Text>
-                </TouchableOpacity>
-                <Text style={styles.sheetEyebrow}>Record sale</Text>
-                <Text style={styles.sheetTitle}>Sale price</Text>
-                {costBasis != null && (
-                  <Text style={styles.basisHelper}>
-                    Cost basis on file: ${fmt(costBasis)}
-                  </Text>
-                )}
-                <View style={styles.priceInputRow}>
-                  <Text style={styles.priceInputDollar}>$</Text>
-                  <TextInput
-                    style={styles.priceInput}
-                    placeholder="0.00"
-                    placeholderTextColor={Colors.text3}
-                    value={salePriceInput}
-                    onChangeText={setSalePriceInput}
-                    keyboardType="decimal-pad"
-                    autoFocus
-                    returnKeyType="done"
-                  />
-                </View>
-                <TouchableOpacity
-                  style={styles.createBtn}
-                  onPress={async () => {
-                    const value = Number(salePriceInput.trim());
-                    if (!Number.isFinite(value) || value < 0) {
-                      Alert.alert('Invalid amount', 'Enter the sale price in dollars.');
-                      return;
-                    }
-                    await sellCard(card, value);
-                    setRemoveSheetOpen(false);
-                  }}
-                >
-                  <Text style={styles.createBtnText}>Confirm sale</Text>
-                </TouchableOpacity>
-              </>
+            <Text style={styles.sheetEyebrow}>
+              Record sale · {sellTarget ? (copyLabel(sellTarget) ?? 'Ungraded') : ''}
+            </Text>
+            <Text style={styles.sheetTitle}>Sale price</Text>
+            {sellTarget?.acquired_price != null && (
+              <Text style={styles.basisHelper}>
+                Cost basis on file: ${fmt(sellTarget.acquired_price)}
+              </Text>
             )}
+            <View style={styles.priceInputRow}>
+              <Text style={styles.priceInputDollar}>$</Text>
+              <TextInput
+                style={styles.priceInput}
+                placeholder="0.00"
+                placeholderTextColor={Colors.text3}
+                value={salePriceInput}
+                onChangeText={setSalePriceInput}
+                keyboardType="decimal-pad"
+                autoFocus
+                returnKeyType="done"
+              />
+            </View>
+            <TouchableOpacity
+              style={styles.createBtn}
+              onPress={async () => {
+                if (!sellTarget) return;
+                const value = Number(salePriceInput.trim());
+                if (!Number.isFinite(value) || value < 0) {
+                  Alert.alert('Invalid amount', 'Enter the sale price in dollars.');
+                  return;
+                }
+                await sellCopy(sellTarget.item_id, sellTarget.card, value);
+                setSellTarget(null);
+                if (copies.length <= 1) setManageSheetOpen(false);
+              }}
+            >
+              <Text style={styles.createBtnText}>Confirm sale</Text>
+            </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -992,7 +1160,7 @@ const styles = StyleSheet.create({
   },
   navBtn: NavButtonStyle,
   navBtnActive: {
-    borderColor: 'rgba(255,215,0,0.4)',
+    borderColor: Colors.goldBorder,
     backgroundColor: 'rgba(255,215,0,0.1)',
   },
   fullScreenCentered: {
@@ -1079,7 +1247,7 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     fontSize: 10,
     letterSpacing: 1.2,
-    color: '#9D8FFF',
+    color: Colors.holo,
   },
   chipHoloVariant: {
     borderRadius: 6,
@@ -1091,7 +1259,7 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     fontSize: 10,
     letterSpacing: 1.2,
-    color: '#fff',
+    color: Colors.text,
     textShadowColor: 'rgba(0,0,0,0.4)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
@@ -1110,7 +1278,7 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     fontSize: 10,
     letterSpacing: 1.2,
-    color: '#A29AFF',
+    color: Colors.holo,
   },
   chipFirstEd: {
     borderColor: 'rgba(255,215,0,0.65)',
@@ -1246,10 +1414,10 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   gradedVariantPillActive: {
-    borderColor: 'rgba(255,215,0,0.4)',
+    borderColor: Colors.goldBorder,
     backgroundColor: 'rgba(255,215,0,0.1)',
   },
   gradedVariantPillText: {
@@ -1298,6 +1466,59 @@ const styles = StyleSheet.create({
   matrixCellEmpty: {
     color: Colors.text3,
   },
+  // Insight boxes (pop reports + sales volume)
+  insightWrap: {
+    marginHorizontal: Spacing.xl,
+    marginBottom: 16,
+    gap: 10,
+  },
+  boxFootnote: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 0.4,
+    color: Colors.text3,
+    marginTop: 10,
+  },
+  // Condition switcher (raw mode)
+  conditionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: Spacing.xl,
+    marginBottom: 12,
+  },
+  conditionLabel: {
+    fontFamily: FontFamily.mono,
+    fontSize: 9,
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+    color: Colors.text3,
+  },
+  conditionPills: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  conditionPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: Colors.glass,
+  },
+  conditionPillActive: {
+    borderColor: Colors.goldBorder,
+    backgroundColor: 'rgba(255,215,0,0.1)',
+  },
+  conditionPillText: {
+    fontFamily: FontFamily.monoMed,
+    fontSize: 11,
+    letterSpacing: 0.5,
+    color: Colors.text2,
+  },
+  conditionPillTextActive: {
+    color: Colors.gold,
+  },
   // Variant selector
   variantRow: {
     marginBottom: 14,
@@ -1319,7 +1540,7 @@ const styles = StyleSheet.create({
   },
   variantPillActive: {
     borderColor: Colors.gold,
-    backgroundColor: 'rgba(255,215,0,0.08)',
+    backgroundColor: Colors.goldFaint,
   },
   variantPillName: {
     fontFamily: FontFamily.bodySemi,
@@ -1500,7 +1721,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1524,7 +1745,7 @@ const styles = StyleSheet.create({
   ctaPrimaryText: {
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
-    color: '#0A0A0C',
+    color: Colors.bg,
   },
   // Sheet
   backdrop: {
@@ -1666,7 +1887,57 @@ const styles = StyleSheet.create({
   createBtnText: {
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
-    color: '#0A0A0C',
+    color: Colors.bg,
+  },
+  // Manage-copies list rows
+  copyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.line,
+  },
+  copyLabelText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 14,
+    color: Colors.text,
+  },
+  copySub: {
+    fontFamily: FontFamily.mono,
+    fontSize: 12,
+    color: Colors.text2,
+    marginTop: 2,
+  },
+  copyActionBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.line,
+  },
+  copyActionText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 12,
+    color: Colors.text,
+  },
+  copyRemoveText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 12,
+    color: Colors.down,
+  },
+  addAnotherBtn: {
+    marginTop: Spacing.md,
+    paddingVertical: 12,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.lineStrong,
+    alignItems: 'center',
+  },
+  addAnotherText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 14,
+    color: Colors.text,
   },
   // Cost basis row under the CTAs
   basisRow: {
@@ -1714,7 +1985,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     paddingHorizontal: 14,
     marginBottom: 16,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   priceInputDollar: {
     fontFamily: FontFamily.mono,
@@ -1740,7 +2011,7 @@ const styles = StyleSheet.create({
   removeOptionPrimaryText: {
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
-    color: '#0A0A0C',
+    color: Colors.bg,
   },
   removeOptionSecondary: {
     paddingVertical: 14,

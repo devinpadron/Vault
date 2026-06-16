@@ -143,8 +143,8 @@ Deno.serve(async (req: Request) => {
         cardId: body.cardId as string,
         force:  Boolean(body.force ?? false),
       });
-      const r = result as { refreshedPrices: boolean; appendedHistoryDays: number };
-      await finishLog('success', (r.refreshedPrices ? 1 : 0) + r.appendedHistoryDays);
+      const r = result as { refreshedPrices: boolean; appendedHistoryDays: number; listingCount: number };
+      await finishLog('success', (r.refreshedPrices ? 1 : 0) + r.appendedHistoryDays + r.listingCount);
 
     } else if (phase === 'prewarm') {
       if (!Array.isArray(body.cardIds)) {

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView } from 'react-native';
+import { memo, useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -7,11 +7,17 @@ import { CardThumb } from '@/components/cards/CardThumb';
 import { SkeletonCard } from '@/components/ui/SkeletonCard';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { Icon } from '@/components/ui/Icon';
-import { useSearchCards, SortField, SortDir } from '@/lib/api/cards';
+import { useSearchCards, useSearchCount, useExpansionNames, SortField, SortDir } from '@/lib/api/cards';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+import { useDebouncedValue } from '@/lib/hooks/useDebouncedValue';
 import { fmt } from '@/lib/format';
-import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
+import { Card } from '@/types';
+import { Colors, FontFamily, PressOpacity, Radius, Spacing } from '@/constants/theme';
 
-const FILTERS = ['Name', 'Set/Pack', 'Artist', 'Rarity'];
+const FILTERS = ['All', 'Name', 'Set/Pack', 'Artist', 'Rarity'];
+
+const GRID_COLS = 3;
+const GRID_GAP = 10;
 
 const SORT_OPTIONS: { field: SortField; dir: SortDir; label: string; icon: 'arrow-up' | 'arrow-down' }[] = [
   { field: 'price',   dir: 'desc', label: 'Price: High → Low', icon: 'arrow-down' },
@@ -22,12 +28,52 @@ const SORT_OPTIONS: { field: SortField; dir: SortDir; label: string; icon: 'arro
   { field: 'number',  dir: 'desc', label: 'Card #: Descending',icon: 'arrow-down' },
 ];
 
+const ResultCell = memo(function ResultCell({ card, index, width }: { card: Card; index: number; width: number }) {
+  return (
+    <Animated.View entering={FadeInDown.delay(Math.min(index % 24, 12) * 25).duration(260)}>
+      <TouchableOpacity
+        style={[styles.gridCell, { width }]}
+        activeOpacity={PressOpacity}
+        onPress={() => router.push(`/card/${card.id}`)}
+      >
+        <CardThumb card={card} width={width} />
+        <Text style={styles.gridName} numberOfLines={1}>{card.name}</Text>
+        <Text style={styles.gridSet} numberOfLines={1}>{card.set}</Text>
+        <View style={styles.gridPriceRow}>
+          <Text style={[styles.gridPrice, card.value === 0 && { color: Colors.text3 }]}>
+            {card.value > 0 ? `$${fmt(card.value)}` : '—'}
+          </Text>
+          {card.value > 0 && card.trend30d != null && card.trend30d !== 0 && (
+            <Text style={[styles.gridTrend, { color: card.trend30d > 0 ? Colors.up : Colors.down }]}>
+              {card.trend30d > 0 ? '↑' : '↓'}{Math.abs(card.trend30d).toFixed(1)}%
+            </Text>
+          )}
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+});
+
 export default function SearchScreen() {
   const [query, setQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState('Name');
+  const [activeFilter, setActiveFilter] = useState('All');
   const [sort, setSort] = useState<{ field: SortField; dir: SortDir }>({ field: 'relevance', dir: 'desc' });
   const [sortOpen, setSortOpen] = useState(false);
   const insets = useSafeAreaInsets();
+  const { width: screenW } = useWindowDimensions();
+
+  // Three columns that fill the row: split the content width (screen minus the
+  // horizontal screen padding) evenly, accounting for the inter-column gaps.
+  const cellWidth = useMemo(
+    () => Math.floor((screenW - Spacing.lg * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS),
+    [screenW],
+  );
+
+  // Debounce so a query fires once per pause in typing, not per keystroke.
+  const debouncedQuery = useDebouncedValue(query, 250);
+
+  // Known set names power the smart dual search (e.g. name + set in one query).
+  const { data: expansionNames = [] } = useExpansionNames();
 
   const {
     data,
@@ -38,9 +84,18 @@ export default function SearchScreen() {
     refetch,
     fetchNextPage,
     hasNextPage,
-  } = useSearchCards(query, activeFilter, sort);
+  } = useSearchCards(debouncedQuery, activeFilter, sort, expansionNames);
 
-  const results = useMemo(() => data?.pages.flat() ?? [], [data]);
+  // Exact total found, independent of how many pages have loaded so far.
+  const { data: totalCount } = useSearchCount(debouncedQuery, activeFilter, expansionNames);
+
+  // Dedupe across pages — pagination can repeat a row if the result set
+  // shifts between fetches, and FlatList keys must be unique.
+  const results = useMemo(() => {
+    const flat = data?.pages.flat() ?? [];
+    const seen = new Set<string>();
+    return flat.filter(c => (seen.has(c.id) ? false : (seen.add(c.id), true)));
+  }, [data]);
 
   // release/number/relevance are sorted server-side; only price needs client-side sort
   const sortedResults = useMemo(() => {
@@ -66,7 +121,7 @@ export default function SearchScreen() {
             autoFocus
             value={query}
             onChangeText={setQuery}
-            placeholder="Search cards, sets, artists…"
+            placeholder="Search name, set, artist, rarity…"
             placeholderTextColor={Colors.text3}
             style={styles.input}
           />
@@ -103,88 +158,71 @@ export default function SearchScreen() {
         })}
       </ScrollView>
 
-      <ScrollView
+      <FlatList
+        data={sortedResults}
+        keyExtractor={card => card.id}
+        numColumns={3}
+        columnWrapperStyle={styles.gridRow}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
-        scrollEventThrottle={200}
-        onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
-          const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
-          if (distanceFromBottom < 300 && hasNextPage && !isFetchingNextPage) {
-            fetchNextPage();
-          }
+        keyboardShouldPersistTaps="handled"
+        initialNumToRender={12}
+        windowSize={7}
+        onEndReachedThreshold={0.5}
+        onEndReached={() => {
+          if (hasNextPage && !isFetchingNextPage) fetchNextPage();
         }}
-      >
-        {isError && <ErrorPanel error={error} onRetry={refetch} />}
+        renderItem={({ item, index }) => <ResultCell card={item} index={index} width={cellWidth} />}
+        ListHeaderComponent={
+          <>
+            {isError && <ErrorPanel error={error} onRetry={refetch} />}
 
-        {/* Results header */}
-        <View style={styles.resultsHeader}>
-          <Text style={styles.sectionLabel}>
-            {query.trim().length >= 2 ? `${results.length} results` : 'Start typing to search'}
-          </Text>
-          <View style={styles.headerRight}>
-            {isFetching && query.trim().length >= 2 && (
-              <Text style={styles.live}>● LIVE</Text>
-            )}
-            <TouchableOpacity
-              onPress={() => { Haptics.selectionAsync(); setSortOpen(true); }}
-              style={[styles.sortPill, sort.field !== 'relevance' && styles.sortPillActive]}
-            >
-              <Icon name="sort" size={10} color={sort.field !== 'relevance' ? Colors.gold : Colors.text2} />
-              <Text style={[styles.sortPillText, sort.field !== 'relevance' && styles.sortPillTextActive]}>
-                {sortLabel}
+            <View style={styles.resultsHeader}>
+              <Text style={styles.sectionLabel}>
+                {query.trim().length >= 2
+                  ? `${(totalCount ?? results.length).toLocaleString()} results`
+                  : 'Start typing to search'}
               </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Skeleton while loading */}
-        {isFetching && query.trim().length >= 2 && results.length === 0 && (
-          <View style={styles.grid}>
-            {[0, 1, 2].map(i => <SkeletonCard key={i} width={104} />)}
-          </View>
-        )}
-
-        {/* Empty state — query entered, no results, not fetching */}
-        {!isFetching && !isError && query.trim().length >= 2 && results.length === 0 && (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>No cards match</Text>
-            <Text style={styles.emptySubtitle}>
-              Try a different name, set, or filter.
-            </Text>
-          </View>
-        )}
-
-        {/* Results grid */}
-        {sortedResults.length > 0 && (
-          <View style={styles.grid}>
-            {sortedResults.map((card, i) => (
-              <TouchableOpacity
-                key={`${card.id}-${i}`}
-                style={styles.gridCell}
-                onPress={() => router.push(`/card/${card.id}`)}
-              >
-                <CardThumb card={card} width={104} />
-                <Text style={styles.gridName} numberOfLines={1}>{card.name}</Text>
-                <Text style={styles.gridSet} numberOfLines={1}>{card.set}</Text>
-                <View style={styles.gridPriceRow}>
-                  <Text style={[styles.gridPrice, card.value === 0 && { color: Colors.text3 }]}>
-                    {card.value > 0 ? `$${fmt(card.value)}` : '—'}
+              <View style={styles.headerRight}>
+                {isFetching && query.trim().length >= 2 && (
+                  <Text style={styles.live}>● LIVE</Text>
+                )}
+                <TouchableOpacity
+                  onPress={() => { Haptics.selectionAsync(); setSortOpen(true); }}
+                  style={[styles.sortPill, sort.field !== 'relevance' && styles.sortPillActive]}
+                >
+                  <Icon name="sort" size={10} color={sort.field !== 'relevance' ? Colors.gold : Colors.text2} />
+                  <Text style={[styles.sortPillText, sort.field !== 'relevance' && styles.sortPillTextActive]}>
+                    {sortLabel}
                   </Text>
-                  {card.value > 0 && card.trend30d != null && card.trend30d !== 0 && (
-                    <Text style={[styles.gridTrend, { color: card.trend30d > 0 ? Colors.up : Colors.down }]}>
-                      {card.trend30d > 0 ? '↑' : '↓'}{Math.abs(card.trend30d).toFixed(1)}%
-                    </Text>
-                  )}
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
+                </TouchableOpacity>
+              </View>
+            </View>
 
-        {isFetchingNextPage && (
-          <ActivityIndicator style={styles.loadingMore} color={Colors.gold} />
-        )}
-      </ScrollView>
+            {/* Skeleton while loading */}
+            {isFetching && query.trim().length >= 2 && results.length === 0 && (
+              <View style={styles.grid}>
+                {[0, 1, 2].map(i => <SkeletonCard key={i} width={cellWidth} />)}
+              </View>
+            )}
+
+            {/* Empty state — query entered, no results, not fetching */}
+            {!isFetching && !isError && query.trim().length >= 2 && results.length === 0 && (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyTitle}>No cards match</Text>
+                <Text style={styles.emptySubtitle}>
+                  Try a different name, set, or filter.
+                </Text>
+              </View>
+            )}
+          </>
+        }
+        ListFooterComponent={
+          isFetchingNextPage
+            ? <ActivityIndicator style={styles.loadingMore} color={Colors.gold} />
+            : null
+        }
+      />
 
       {/* Sort modal */}
       <Modal visible={sortOpen} transparent animationType="slide" onRequestClose={() => setSortOpen(false)}>
@@ -284,7 +322,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.line,
   },
   pillActive: {
-    borderColor: 'rgba(255,215,0,0.4)',
+    borderColor: Colors.goldBorder,
     backgroundColor: 'rgba(255,215,0,0.1)',
   },
   pillText: {
@@ -323,8 +361,12 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 10,
   },
+  gridRow: {
+    gap: GRID_GAP,
+    marginBottom: 10,
+  },
   gridCell: {
-    width: 104,
+    // width is set dynamically so three columns fill the row edge-to-edge
   },
   gridName: {
     fontFamily: FontFamily.display,
@@ -372,8 +414,8 @@ const styles = StyleSheet.create({
     borderColor: Colors.line,
   },
   sortPillActive: {
-    borderColor: 'rgba(255,215,0,0.4)',
-    backgroundColor: 'rgba(255,215,0,0.08)',
+    borderColor: Colors.goldBorder,
+    backgroundColor: Colors.goldFaint,
   },
   sortPillText: {
     fontFamily: FontFamily.mono,
@@ -387,7 +429,7 @@ const styles = StyleSheet.create({
   },
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: Colors.scrim,
   },
   sheet: {
     backgroundColor: Colors.surface,

@@ -74,7 +74,7 @@ export async function syncListings(
   return { page, cardCount: cardIds.length, listingCount, nextPage };
 }
 
-function mapListingRow(cardId: string, l: ScrydexListing): Record<string, unknown> {
+export function mapListingRow(cardId: string, l: ScrydexListing): Record<string, unknown> {
   return {
     id:          l.id,
     card_id:     cardId,

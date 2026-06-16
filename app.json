@@ -11,6 +11,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.devinpadron.vault",
       "usesAppleSignIn": true,
+      "associatedDomains": ["applinks:vault.app"],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -45,7 +46,13 @@
           "microphonePermission": false
         }
       ],
-      "expo-apple-authentication"
+      "expo-apple-authentication",
+      [
+        "expo-notifications",
+        {
+          "color": "#FFD700"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

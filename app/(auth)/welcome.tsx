@@ -224,7 +224,7 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 15,
     borderRadius: Radius.md,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.text,
   },
   appleBtnText: {
     fontFamily: FontFamily.bodySemi,
@@ -241,7 +241,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: Colors.lineStrong,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   googleBtnText: {
     fontFamily: FontFamily.bodySemi,
@@ -258,7 +258,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,215,0,0.3)',
-    backgroundColor: 'rgba(255,215,0,0.08)',
+    backgroundColor: Colors.goldFaint,
     marginBottom: 20,
   },
   expiredText: {

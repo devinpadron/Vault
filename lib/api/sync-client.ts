@@ -11,6 +11,8 @@ interface OnViewResponse {
   cardId: string;
   refreshedPrices: boolean;
   appendedHistoryDays: number;
+  refreshedListings: boolean;
+  listingCount: number;
 }
 
 interface PrewarmResponse {
@@ -60,7 +62,7 @@ export async function prewarmFromLocalCollection(): Promise<PrewarmResponse | nu
       `SELECT DISTINCT i.card_id
          FROM cloud_collection_items i
          JOIN cloud_collections c ON c.id = i.collection_id
-        WHERE c.kind IN ('collection', 'wishlist')`,
+        WHERE c.kind IN ('collection', 'wishlist', 'binder')`,
     );
     const cardIds = rows.map(r => r.card_id);
     if (cardIds.length === 0) return null;

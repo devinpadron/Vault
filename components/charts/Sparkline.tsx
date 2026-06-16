@@ -1,4 +1,5 @@
 import Svg, { Path, Defs, LinearGradient, Stop } from 'react-native-svg';
+import { Colors } from '@/constants/theme';
 
 interface Props {
   data: number[];
@@ -6,7 +7,7 @@ interface Props {
   height?: number;
 }
 
-export function Sparkline({ data, color = '#4ADE80', height = 36 }: Props) {
+export function Sparkline({ data, color = Colors.up, height = 36 }: Props) {
   if (data.length < 2) return null;
 
   const W = 280;

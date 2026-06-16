@@ -53,7 +53,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   chipCompact: {
     paddingHorizontal: 0,
@@ -63,8 +63,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   chipActive: {
-    borderColor: 'rgba(255,215,0,0.4)',
-    backgroundColor: 'rgba(255,215,0,0.08)',
+    borderColor: Colors.goldBorder,
+    backgroundColor: Colors.goldFaint,
   },
   label: {
     fontFamily: FontFamily.mono,

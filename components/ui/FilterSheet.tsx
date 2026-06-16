@@ -211,7 +211,7 @@ export function FilterSheet({ visible, entries, value, onApply, onClose }: Props
             <Switch
               value={draft.foilOnly}
               onValueChange={v => setDraft({ ...draft, foilOnly: v })}
-              trackColor={{ true: Colors.gold, false: '#3a3a44' }}
+              trackColor={{ true: Colors.gold, false: Colors.lineStrong }}
               thumbColor="#fff"
             />
           </View>
@@ -362,15 +362,15 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   chipActive: { backgroundColor: Colors.gold, borderColor: Colors.gold },
   chipLabel: { fontFamily: FontFamily.body, fontSize: 12, color: Colors.text },
-  chipLabelActive: { color: '#0A0A0C', fontFamily: FontFamily.bodySemi },
+  chipLabelActive: { color: Colors.bg, fontFamily: FontFamily.bodySemi },
   chipDirection: {
     fontFamily: FontFamily.mono,
     fontSize: 10,
-    color: '#0A0A0C',
+    color: Colors.bg,
     letterSpacing: 0.4,
   },
 
@@ -398,7 +398,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.gold,
     alignItems: 'center',
   },
-  applyBtnText: { fontFamily: FontFamily.bodySemi, fontSize: 15, color: '#0A0A0C' },
+  applyBtnText: { fontFamily: FontFamily.bodySemi, fontSize: 15, color: Colors.bg },
 
   triggerBtn: {
     flexDirection: 'row',
@@ -408,7 +408,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   triggerLabel: { fontFamily: FontFamily.body, fontSize: 12, color: Colors.text },
   triggerBadge: {
@@ -420,5 +420,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginLeft: 2,
   },
-  triggerBadgeText: { fontFamily: FontFamily.bodySemi, fontSize: 10, color: '#0A0A0C' },
+  triggerBadgeText: { fontFamily: FontFamily.bodySemi, fontSize: 10, color: Colors.bg },
 });

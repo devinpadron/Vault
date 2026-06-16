@@ -24,6 +24,7 @@ export function Avatar({ colors, size, uri, online }: AvatarProps) {
             style={{ width: size, height: size }}
             contentFit="cover"
             transition={120}
+            cachePolicy="memory-disk"
           />
         ) : (
           <LinearGradient

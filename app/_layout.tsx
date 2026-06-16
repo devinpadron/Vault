@@ -1,4 +1,4 @@
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { AppState, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Stack, useRouter, useSegments, type ErrorBoundaryProps } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -8,8 +8,9 @@ import { SpaceGrotesk_400Regular, SpaceGrotesk_600SemiBold } from '@expo-google-
 import { JetBrainsMono_400Regular, JetBrainsMono_500Medium } from '@expo-google-fonts/jetbrains-mono';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from '@/lib/auth/AuthContext';
+import { addNotificationTapListener } from '@/lib/notifications/push';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 
 const queryClient = new QueryClient({
@@ -19,6 +20,13 @@ const queryClient = new QueryClient({
       staleTime: 1000 * 60 * 60,
     },
   },
+});
+
+// React Query's focus heuristics are web-only — wire them to AppState so
+// stale queries (notifications, activity, prices) refetch when the app
+// returns to the foreground instead of polling while it's backgrounded.
+AppState.addEventListener('change', state => {
+  focusManager.setFocused(state === 'active');
 });
 
 SplashScreen.preventAutoHideAsync();
@@ -57,6 +65,9 @@ function AppController({ fontsLoaded }: { fontsLoaded: boolean }) {
   const { status } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+
+  // Route notification taps (foreground + cold start) to the right screen.
+  useEffect(() => addNotificationTapListener(), []);
 
   useEffect(() => {
     if (!fontsLoaded || status === 'loading') return;
@@ -112,6 +123,10 @@ export default function RootLayout() {
             <Stack.Screen name="search" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
             <Stack.Screen name="binder/[id]" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
             <Stack.Screen name="friend/[id]" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="friend-diff" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="notifications" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="activity" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="u/[username]" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
             <Stack.Screen name="wishlist" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
             <Stack.Screen name="settings" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
             <Stack.Screen name="profile" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
@@ -164,7 +179,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   errorBtnText: {
     fontFamily: FontFamily.mono,

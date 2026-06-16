@@ -238,7 +238,7 @@ export function useAddCardToBinder() {
       [binderId],
     );
     const position = (maxRow?.max_pos ?? -1) + 1;
-    await addItemToCollection(binderId, card, position);
+    await addItemToCollection(binderId, card, undefined, position);
     queryClient.invalidateQueries({ queryKey: ['binder-cards', binderId] });
     queryClient.invalidateQueries({ queryKey: ['binder', user.id, binderId] });
     queryClient.invalidateQueries({ queryKey: ['binders', user.id] });

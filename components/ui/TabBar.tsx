@@ -5,7 +5,7 @@ import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Icon } from './Icon';
-import { Colors, FontFamily } from '@/constants/theme';
+import { Colors, FontFamily, Shadows } from '@/constants/theme';
 
 // Height of the tab bar above the safe-area inset (wrapper paddingTop 12 +
 // row content ~50). Consumers add Math.max(insets.bottom, 8) to clear it.
@@ -44,7 +44,7 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
   return (
     <View style={[styles.wrapper, { paddingBottom: bottomPad }]}>
       <LinearGradient
-        colors={['rgba(10,10,12,0)', 'rgba(10,10,12,0.92)', '#0A0A0C']}
+        colors={['rgba(10,10,12,0)', 'rgba(10,10,12,0.92)', Colors.bg]}
         locations={[0, 0.3, 1]}
         style={StyleSheet.absoluteFill}
         pointerEvents="none"
@@ -128,13 +128,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.gold,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: Colors.gold,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.45,
-    shadowRadius: 16,
-    elevation: 10,
+    ...Shadows.goldGlow,
     borderWidth: 3,
-    borderColor: '#0A0A0C',
+    borderColor: Colors.bg,
   },
   label: {
     fontFamily: FontFamily.mono,

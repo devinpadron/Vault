@@ -95,7 +95,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,215,0,0.3)',
-    backgroundColor: 'rgba(255,215,0,0.08)',
+    backgroundColor: Colors.goldFaint,
   },
   cardTitle: {
     fontFamily: FontFamily.display,

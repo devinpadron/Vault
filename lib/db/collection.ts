@@ -7,10 +7,14 @@ import { getDb } from './database';
 import {
   addItemToCollection,
   getOrCreateDefaultCollection,
+  ItemDetails,
   recordSaleAndRemove,
+  recordSaleAndRemoveById,
   removeItemFromCollectionByCard,
+  removeItemById,
   setCollectionVisibility,
   setItemCostBasis,
+  setItemCostBasisById,
 } from './cloud-sync';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { Card } from '@/types';
@@ -28,12 +32,18 @@ export function useCollectionEntries() {
       if (!user) return [];
       const db = await getDb();
       const rows = await db.getAllAsync<{
+        item_id: string;
         card_json: string;
         added_at: number;
         acquired_price: number | null;
         acquired_at: number | null;
+        variant_name: string | null;
+        condition: string | null;
+        grader: string | null;
+        grade: string | null;
       }>(
-        `SELECT i.card_json, i.added_at, i.acquired_price, i.acquired_at
+        `SELECT i.id AS item_id, i.card_json, i.added_at, i.acquired_price, i.acquired_at,
+                i.variant_name, i.condition, i.grader, i.grade
            FROM cloud_collection_items i
            JOIN cloud_collections c ON c.id = i.collection_id
           WHERE c.user_id = ? AND c.kind = 'collection'
@@ -41,10 +51,15 @@ export function useCollectionEntries() {
         [user.id],
       );
       return rows.map(r => ({
+        item_id:        r.item_id,
         card:           JSON.parse(r.card_json) as Card,
         added_at:       r.added_at,
         acquired_price: r.acquired_price,
         acquired_at:    r.acquired_at,
+        variant_name:   r.variant_name,
+        condition:      r.condition,
+        grader:         r.grader,
+        grade:          r.grade,
       }));
     },
   });
@@ -81,14 +96,62 @@ export function useIsInCollection(cardId: string) {
 export function useAddToCollection() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  return async (card: Card): Promise<void> => {
+  return async (card: Card, details?: ItemDetails): Promise<void> => {
     if (!user) throw new Error('Sign in to save cards.');
     const collectionId = await getOrCreateDefaultCollection(user.id, 'collection', 'Main');
-    await addItemToCollection(collectionId, card);
+    await addItemToCollection(collectionId, card, details);
     queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
     queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, card.id] });
+    queryClient.invalidateQueries({ queryKey: ['collection-copies', user.id, card.id] });
     queryClient.invalidateQueries({ queryKey: ['portfolio-history', user.id] });
   };
+}
+
+/**
+ * All copies of a given card the user holds in their main collection — one
+ * entry per physical copy (distinct variant / grade). Drives the card-detail
+ * "manage copies" UI.
+ */
+export function useCollectionCopies(cardId: string) {
+  const { user } = useAuth();
+  return useQuery<CollectionEntry[]>({
+    queryKey: ['collection-copies', user?.id, cardId],
+    queryFn: async () => {
+      if (!user || !cardId) return [];
+      const db = await getDb();
+      const rows = await db.getAllAsync<{
+        item_id: string;
+        card_json: string;
+        added_at: number;
+        acquired_price: number | null;
+        acquired_at: number | null;
+        variant_name: string | null;
+        condition: string | null;
+        grader: string | null;
+        grade: string | null;
+      }>(
+        `SELECT i.id AS item_id, i.card_json, i.added_at, i.acquired_price, i.acquired_at,
+                i.variant_name, i.condition, i.grader, i.grade
+           FROM cloud_collection_items i
+           JOIN cloud_collections c ON c.id = i.collection_id
+          WHERE c.user_id = ? AND c.kind = 'collection' AND i.card_id = ?
+          ORDER BY i.added_at DESC`,
+        [user.id, cardId],
+      );
+      return rows.map(r => ({
+        item_id:        r.item_id,
+        card:           JSON.parse(r.card_json) as Card,
+        added_at:       r.added_at,
+        acquired_price: r.acquired_price,
+        acquired_at:    r.acquired_at,
+        variant_name:   r.variant_name,
+        condition:      r.condition,
+        grader:         r.grader,
+        grade:          r.grade,
+      }));
+    },
+    enabled: !!cardId,
+  });
 }
 
 export function useRemoveFromCollection() {
@@ -100,6 +163,23 @@ export function useRemoveFromCollection() {
     await removeItemFromCollectionByCard(collectionId, cardId);
     queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
     queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, cardId] });
+    queryClient.invalidateQueries({ queryKey: ['collection-copies', user.id, cardId] });
+    queryClient.invalidateQueries({ queryKey: ['portfolio-history', user.id] });
+  };
+}
+
+/** Remove a single physical copy by its item id (copy-aware). Pass the card id
+ *  too so the per-card queries can be invalidated. */
+export function useRemoveItem() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return async (itemId: string, cardId: string): Promise<void> => {
+    if (!user) throw new Error('Sign in to manage your collection.');
+    await removeItemById(itemId);
+    queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, cardId] });
+    queryClient.invalidateQueries({ queryKey: ['collection-copies', user.id, cardId] });
+    queryClient.invalidateQueries({ queryKey: ['portfolio-summary', user.id] });
     queryClient.invalidateQueries({ queryKey: ['portfolio-history', user.id] });
   };
 }
@@ -122,6 +202,25 @@ export function useUpdateCostBasis() {
     const collectionId = await getOrCreateDefaultCollection(user.id, 'collection', 'Main');
     await setItemCostBasis(collectionId, cardId, acquiredPrice, acquiredAt);
     queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['card-cost-basis', user.id, cardId] });
+    queryClient.invalidateQueries({ queryKey: ['portfolio-summary', user.id] });
+  };
+}
+
+/** Set/clear the cost basis for a single physical copy by item id. */
+export function useUpdateCopyCostBasis() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return async (
+    itemId: string,
+    cardId: string,
+    acquiredPrice: number | null,
+    acquiredAt: number | null = null,
+  ): Promise<void> => {
+    if (!user) throw new Error('Sign in to manage your collection.');
+    await setItemCostBasisById(itemId, acquiredPrice, acquiredAt);
+    queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['collection-copies', user.id, cardId] });
     queryClient.invalidateQueries({ queryKey: ['card-cost-basis', user.id, cardId] });
     queryClient.invalidateQueries({ queryKey: ['portfolio-summary', user.id] });
   };
@@ -173,6 +272,25 @@ export function useSellCard() {
     await recordSaleAndRemove(user.id, collectionId, card, salePrice);
     queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
     queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, card.id] });
+    queryClient.invalidateQueries({ queryKey: ['portfolio-summary', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['sales', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['portfolio-history', user.id] });
+  };
+}
+
+/**
+ * Copy-aware sale: sell a single physical copy by item id. Snapshots cost basis
+ * from that copy's row and removes only that copy.
+ */
+export function useSellCopy() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return async (itemId: string, card: Card, salePrice: number): Promise<void> => {
+    if (!user) throw new Error('Sign in to manage your collection.');
+    await recordSaleAndRemoveById(user.id, itemId, card, salePrice);
+    queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, card.id] });
+    queryClient.invalidateQueries({ queryKey: ['collection-copies', user.id, card.id] });
     queryClient.invalidateQueries({ queryKey: ['portfolio-summary', user.id] });
     queryClient.invalidateQueries({ queryKey: ['sales', user.id] });
     queryClient.invalidateQueries({ queryKey: ['portfolio-history', user.id] });

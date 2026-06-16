@@ -52,9 +52,24 @@ export interface ScrydexPrice {
   };
 }
 
+// Population (census) report — present on cards with include=pop_reports.
+// One entry per grading company; Pokémon/PSA/English is the only coverage today.
+export interface ScrydexPopReportGrade {
+  grade: string;   // "10" | "9" | "Authentic" | …
+  count: number;
+}
+
+export interface ScrydexPopReport {
+  company: string;       // "PSA"
+  total?: number;        // grand total graded at this company (incl. qualifiers/authentic)
+  grade_total?: number;  // sum across numeric grades
+  grades: ScrydexPopReportGrade[];
+}
+
 export interface ScrydexVariant {
   name: string;
   prices: ScrydexPrice[];
+  pop_reports?: ScrydexPopReport[];
 }
 
 export interface ScrydexCardBrief {
@@ -229,10 +244,25 @@ export class ScrydexClient {
 
   // GET /cards/{id} — returns ScrydexCardFull. Use when the list endpoint's
   // brief shape is missing abilities/attacks/etc.
-  async getCard(cardId: string, includePrices = false): Promise<ScrydexCardFull> {
+  async getCard(
+    cardId: string,
+    includePrices = false,
+    includePopReports = false,
+  ): Promise<ScrydexCardFull> {
     const params: Record<string, string> = { casing: 'snake' };
-    if (includePrices) params.include = 'prices';
-    return this.get<ScrydexCardFull>(`/cards/${cardId}`, params);
+    const include = [
+      includePrices ? 'prices' : null,
+      includePopReports ? 'pop_reports' : null,
+    ].filter(Boolean);
+    if (include.length > 0) params.include = include.join(',');
+    // GET /cards/{id} actually wraps the card in a { data: ... } envelope
+    // (despite the docs saying single resources are unwrapped). Unwrap it,
+    // tolerating both shapes so we're robust if Scrydex ever changes it.
+    const resp = await this.get<{ data?: ScrydexCardFull } & ScrydexCardFull>(
+      `/cards/${cardId}`,
+      params,
+    );
+    return resp.data ?? resp;
   }
 
   // GET /cards/{id}/price_history.

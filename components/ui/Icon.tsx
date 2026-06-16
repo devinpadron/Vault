@@ -30,6 +30,8 @@ const NAME_MAP: Record<string, keyof typeof Ionicons.glyphMap> = {
   settings:      'settings-outline',
   logout:        'log-out-outline',
   camera:        'camera-outline',
+  compare:       'git-compare-outline',
+  activity:      'pulse-outline',
 };
 
 interface Props {

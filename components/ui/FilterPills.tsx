@@ -47,7 +47,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   pillActive: {
     backgroundColor: Colors.gold,
@@ -59,7 +59,7 @@ const styles = StyleSheet.create({
     color: Colors.text,
   },
   labelActive: {
-    color: '#0A0A0C',
+    color: Colors.bg,
     fontFamily: FontFamily.bodySemi,
   },
 });

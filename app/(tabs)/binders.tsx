@@ -28,7 +28,7 @@ import {
   rulesHaveAtLeastOneFilter,
 } from '@/components/binders/SmartRulesEditor';
 import { TONE_PAIRS } from '@/lib/binder-tones';
-import { Colors, FontFamily, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 import { Binder } from '@/types';
 
 export default function BindersScreen() {
@@ -352,12 +352,12 @@ const styles = StyleSheet.create({
   addBtn: {
     width: 40,
     height: 40,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
     marginBottom: 6,
   },
   list: {
@@ -431,7 +431,7 @@ const styles = StyleSheet.create({
   binderName: {
     fontFamily: FontFamily.display,
     fontSize: 22,
-    color: '#fff',
+    color: Colors.text,
     textShadowColor: 'rgba(0,0,0,0.4)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,
@@ -451,7 +451,7 @@ const styles = StyleSheet.create({
   binderCount: {
     fontFamily: FontFamily.mono,
     fontSize: 11,
-    color: '#fff',
+    color: Colors.text,
   },
   binderCountLabel: {
     fontFamily: FontFamily.body,
@@ -461,7 +461,7 @@ const styles = StyleSheet.create({
   // Creation sheet
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: Colors.scrim,
   },
   sheet: {
     backgroundColor: Colors.elevated,
@@ -533,7 +533,7 @@ const styles = StyleSheet.create({
   createBtnText: {
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
-    color: '#0A0A0C',
+    color: Colors.bg,
   },
   // Smart binder UI
   smartToggle: {
@@ -545,12 +545,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
     marginBottom: 12,
   },
   smartToggleActive: {
-    borderColor: 'rgba(255,215,0,0.4)',
-    backgroundColor: 'rgba(255,215,0,0.08)',
+    borderColor: Colors.goldBorder,
+    backgroundColor: Colors.goldFaint,
   },
   smartToggleLabel: {
     fontFamily: FontFamily.bodySemi,
@@ -609,10 +609,10 @@ const styles = StyleSheet.create({
   ruleChip: {
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   ruleChipActive: {
     borderColor: 'rgba(255,215,0,0.45)',

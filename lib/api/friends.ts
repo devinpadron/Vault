@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { getDb } from '@/lib/db/database';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { avatarFor } from '@/lib/avatar';
 import { toneFor } from '@/lib/binder-tones';
@@ -114,7 +115,7 @@ export function useFriend(id: string) {
 
 type FriendCollectionRow = {
   id: string;
-  kind: 'collection' | 'wishlist' | 'binder' | 'for_trade';
+  kind: 'collection' | 'wishlist' | 'binder';
   name: string;
   description: string | null;
   tone_start: string | null;
@@ -250,6 +251,87 @@ export function useFriendBinderCards(binderId: string) {
       return ((data ?? []) as unknown as Row[])
         .filter(r => r.cards !== null)
         .map((r, i) => mapRow(r.cards as SupabaseCardFull, i));
+    },
+  });
+}
+
+// ─── Friend collection diff ───────────────────────────────────────────────────
+// Compares the signed-in user's main collection (local mirror, instant) against
+// a friend's *public* main collection (Supabase, RLS-gated). Keyed on card_id,
+// the same identity collections use everywhere else. Mirrors the owned/missing
+// two-query pattern in lib/db/sets.ts useSetDrilldown.
+
+export interface FriendCollectionDiff {
+  /** True when the friend hasn't shared a public main collection. */
+  private:    boolean;
+  mutual:     Card[];   // cards both of you own (rendered from your copies)
+  onlyMine:   Card[];   // you own, they don't
+  onlyTheirs: Card[];   // they own, you don't
+}
+
+export function useFriendCollectionDiff(friendId: string | undefined | null) {
+  const { user } = useAuth();
+  return useQuery<FriendCollectionDiff>({
+    queryKey: ['friend-collection-diff', user?.id, friendId],
+    enabled: !!user?.id && !!friendId,
+    queryFn: async () => {
+      const empty: FriendCollectionDiff = {
+        private: false, mutual: [], onlyMine: [], onlyTheirs: [],
+      };
+
+      // 1. Resolve the friend's public main collection. RLS strips it if private,
+      //    so an empty result means "not shared".
+      const { data: coll, error: cErr } = await supabase
+        .from('collections')
+        .select('id')
+        .eq('user_id', friendId!)
+        .eq('kind', 'collection')
+        .maybeSingle();
+      if (cErr) throw cErr;
+      if (!coll) return { ...empty, private: true };
+
+      // 2. Friend's cards (full card objects for thumbs).
+      const { data: items, error: iErr } = await supabase
+        .from('collection_items')
+        .select(`card_id, cards!card_id(${CARD_SELECT})`)
+        .eq('collection_id', (coll as { id: string }).id);
+      if (iErr) throw iErr;
+      type Row = { card_id: string; cards: SupabaseCardFull | null };
+      const theirCards = new Map<string, Card>();
+      for (const r of ((items ?? []) as unknown as Row[])) {
+        if (!r.cards || theirCards.has(r.card_id)) continue;
+        theirCards.set(r.card_id, mapRow(r.cards));
+      }
+
+      // 3. My cards from the local mirror.
+      const db = await getDb();
+      const rows = await db.getAllAsync<{ card_json: string; card_id: string }>(
+        `SELECT i.card_json, i.card_id
+           FROM cloud_collection_items i
+           JOIN cloud_collections c ON c.id = i.collection_id
+          WHERE c.user_id = ? AND c.kind = 'collection'`,
+        [user!.id],
+      );
+      const myCards = new Map<string, Card>();
+      for (const r of rows) {
+        if (myCards.has(r.card_id)) continue;
+        try { myCards.set(r.card_id, JSON.parse(r.card_json) as Card); }
+        catch { /* skip bad row */ }
+      }
+
+      // 4. Partition by card_id.
+      const mutual:     Card[] = [];
+      const onlyMine:   Card[] = [];
+      const onlyTheirs: Card[] = [];
+      for (const [id, card] of myCards) {
+        if (theirCards.has(id)) mutual.push(card);
+        else onlyMine.push(card);
+      }
+      for (const [id, card] of theirCards) {
+        if (!myCards.has(id)) onlyTheirs.push(card);
+      }
+
+      return { private: false, mutual, onlyMine, onlyTheirs };
     },
   });
 }

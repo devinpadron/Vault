@@ -636,7 +636,7 @@ const styles = StyleSheet.create({
   dot: {
     width: 5,
     height: 5,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     backgroundColor: 'rgba(255,255,255,0.3)',
   },
   dotActive: {
@@ -662,7 +662,7 @@ const styles = StyleSheet.create({
   ctaPrimaryText: {
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
-    color: '#0A0A0C',
+    color: Colors.bg,
   },
   ctaIcon: {
     width: 50,
@@ -670,12 +670,12 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
     alignItems: 'center',
     justifyContent: 'center',
   },
   // Sheets
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
+  backdrop: { flex: 1, backgroundColor: Colors.scrim },
   sheet: {
     backgroundColor: Colors.elevated,
     borderTopLeftRadius: 24,
@@ -747,7 +747,7 @@ const styles = StyleSheet.create({
   saveBtnText: {
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
-    color: '#0A0A0C',
+    color: Colors.bg,
   },
   // Smart-rules editor sheet — full height so the scroll list breathes.
   rulesSheet: {

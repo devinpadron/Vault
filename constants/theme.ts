@@ -10,6 +10,25 @@ export const Colors = {
   text3: 'rgba(255,255,255,0.35)',
   up: '#4ADE80',
   down: '#FF5C5C',
+  // Ghost-button / pill fill used across every screen.
+  glass: 'rgba(255,255,255,0.04)',
+  // Backdrop behind every bottom sheet and modal.
+  scrim: 'rgba(0,0,0,0.5)',
+  // Gold at the three alphas the UI actually uses: tinted fills, active
+  // fills, and borders around gold-tinted elements.
+  goldFaint: 'rgba(255,215,0,0.08)',
+  goldTint: 'rgba(255,215,0,0.12)',
+  goldBorder: 'rgba(255,215,0,0.4)',
+  // Lilac accent used for holo/special-variant labels.
+  holo: '#9D8FFF',
+} as const;
+
+// Decorative gradients reused across screens.
+export const Gradients = {
+  // Avatar ring / profile CTA accent.
+  profileRing: [Colors.gold, '#FF5FB6'] as [string, string],
+  // Reverse-holo chip border.
+  reverseHolo: ['#7A6BFF', '#5FD2FF', '#FF7AE0'] as [string, string, string],
 } as const;
 
 export const Spacing = {
@@ -49,5 +68,28 @@ export const NavButtonStyle = {
   justifyContent: 'center',
   borderWidth: 1,
   borderColor: Colors.line,
-  backgroundColor: 'rgba(255,255,255,0.04)',
+  backgroundColor: Colors.glass,
+} as const;
+
+// Single press-feedback value for every TouchableOpacity — the app used to
+// range 0.7–0.9 ad hoc.
+export const PressOpacity = 0.7;
+
+// Elevation presets. `raised` for floating chrome (action bars, FABs over
+// content); `goldGlow` for the primary FAB.
+export const Shadows = {
+  raised: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  goldGlow: {
+    shadowColor: Colors.gold,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    elevation: 10,
+  },
 } as const;

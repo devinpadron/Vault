@@ -323,7 +323,7 @@ const styles = StyleSheet.create({
     width:  THUMB_SIZE,
     height: THUMB_SIZE,
     borderRadius: THUMB_SIZE / 2,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.text,
     borderWidth: 2,
     borderColor: Colors.gold,
     shadowColor: '#000',

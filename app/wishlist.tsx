@@ -9,7 +9,7 @@ import { useWishlistCards } from '@/lib/db/wishlist';
 import { useCollectionVisibility, useSetCollectionVisibility } from '@/lib/db/collection';
 import { VisibilityChip } from '@/components/ui/VisibilityChip';
 import { fmt } from '@/lib/format';
-import { Colors, FontFamily, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 import { Card, cardBaseName, cardNameVariant } from '@/types';
 
 function CardCell({ card, index }: { card: Card; index: number }) {
@@ -147,12 +147,12 @@ const styles = StyleSheet.create({
   closeBtn: {
     width: 40,
     height: 40,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
     marginBottom: 6,
   },
   eyebrow: {

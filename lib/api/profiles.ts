@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { File } from 'expo-file-system';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { toneFor } from '@/lib/binder-tones';
 export { avatarFor } from '@/lib/avatar';
 
 export interface Profile {
@@ -12,6 +13,10 @@ export interface Profile {
   bio: string | null;
   created_at: string;
   updated_at: string;
+  // Public showcase (Phase 4). Optional because the friends-side queries select
+  // a narrower column set; only profiles.ts queries hydrate these.
+  is_showcase_public?: boolean;
+  showcase_binder_ids?: string[];
 }
 
 export interface ProfileStats {
@@ -20,7 +25,8 @@ export interface ProfileStats {
   recent_card_name: string | null;
 }
 
-const PROFILE_COLUMNS = 'id, username, display_name, avatar_url, bio, created_at, updated_at';
+const PROFILE_COLUMNS =
+  'id, username, display_name, avatar_url, bio, created_at, updated_at, is_showcase_public, showcase_binder_ids';
 
 // ─── Reads ────────────────────────────────────────────────────────────────────
 
@@ -96,7 +102,7 @@ export interface PublicCollection {
   id: string;
   name: string;
   description: string | null;
-  kind: 'collection' | 'wishlist' | 'binder' | 'for_trade';
+  kind: 'collection' | 'wishlist' | 'binder';
   is_public: boolean;
   item_count: number;
 }
@@ -161,6 +167,8 @@ export interface UpdateProfileInput {
   username?: string;
   display_name?: string | null;
   bio?: string | null;
+  is_showcase_public?: boolean;
+  showcase_binder_ids?: string[];
 }
 
 export function useUpdateProfile() {
@@ -173,6 +181,8 @@ export function useUpdateProfile() {
       if (input.username !== undefined) payload.username = input.username.trim().toLowerCase();
       if (input.display_name !== undefined) payload.display_name = input.display_name?.trim() || null;
       if (input.bio !== undefined) payload.bio = input.bio?.trim() || null;
+      if (input.is_showcase_public !== undefined) payload.is_showcase_public = input.is_showcase_public;
+      if (input.showcase_binder_ids !== undefined) payload.showcase_binder_ids = input.showcase_binder_ids;
       const { data, error } = await supabase
         .from('profiles')
         .update(payload)
@@ -185,6 +195,74 @@ export function useUpdateProfile() {
     onSuccess: profile => {
       qc.setQueryData(['profile', profile.id], profile);
       qc.invalidateQueries({ queryKey: ['profile-search'] });
+    },
+  });
+}
+
+// ─── Public showcase (Phase 4) ──────────────────────────────────────────────
+
+export interface ShowcaseBinder {
+  id: string;
+  name: string;
+  description: string | null;
+  item_count: number;
+  tone: [string, string];
+}
+
+export interface PublicShowcase {
+  profile: Profile;
+  binders: ShowcaseBinder[];
+}
+
+/**
+ * A user's opt-in public showcase, resolved by username. Returns null when the
+ * username doesn't exist or the user hasn't enabled their showcase. Only the
+ * binders they featured (and that are public) are returned, in their chosen
+ * order. Safe for logged-out / non-friend viewers — RLS allows public reads.
+ */
+export function usePublicShowcase(username: string | undefined | null) {
+  const handle = (username ?? '').trim().toLowerCase();
+  return useQuery<PublicShowcase | null>({
+    queryKey: ['public-showcase', handle],
+    enabled: handle.length > 0,
+    queryFn: async () => {
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select(PROFILE_COLUMNS)
+        .eq('username', handle)
+        .maybeSingle();
+      if (error) throw error;
+      const p = profile as Profile | null;
+      if (!p || !p.is_showcase_public) return null;
+
+      const ids = p.showcase_binder_ids ?? [];
+      if (ids.length === 0) return { profile: p, binders: [] };
+
+      const { data: cols, error: cErr } = await supabase
+        .from('collections')
+        .select('id, name, description, tone_start, tone_end, is_public, collection_items(count)')
+        .in('id', ids)
+        .eq('is_public', true);
+      if (cErr) throw cErr;
+
+      type Row = {
+        id: string; name: string; description: string | null;
+        tone_start: string | null; tone_end: string | null;
+        is_public: boolean; collection_items: { count: number }[];
+      };
+      const byId = new Map<string, Row>(((cols ?? []) as Row[]).map(r => [r.id, r]));
+      // Preserve the owner's chosen order.
+      const binders: ShowcaseBinder[] = ids
+        .map(id => byId.get(id))
+        .filter((r): r is Row => !!r)
+        .map(r => ({
+          id: r.id,
+          name: r.name,
+          description: r.description,
+          item_count: r.collection_items[0]?.count ?? 0,
+          tone: (r.tone_start && r.tone_end ? [r.tone_start, r.tone_end] : toneFor(r.id)) as [string, string],
+        }));
+      return { profile: p, binders };
     },
   });
 }

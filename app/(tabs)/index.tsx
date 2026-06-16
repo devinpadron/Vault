@@ -15,7 +15,7 @@ import { useMyProfile } from '@/lib/api/profiles';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useCollectionCards } from '@/lib/db/collection';
 import { fmt } from '@/lib/format';
-import { Colors, FontFamily, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 import { cardBaseName, cardNameVariant } from '@/types';
 
 export default function HomeScreen() {
@@ -222,12 +222,12 @@ const styles = StyleSheet.create({
   iconBtn: {
     width: 40,
     height: 40,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   // Stats card
   statsCard: {
@@ -303,7 +303,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: '#14141B',
+    backgroundColor: Colors.elevated,
     alignItems: 'center',
     gap: 16,
     overflow: 'hidden',
@@ -340,10 +340,10 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     fontSize: 10,
     letterSpacing: 1.2,
-    color: '#9D8FFF',
+    color: Colors.holo,
   },
   chipGold: {
-    borderColor: 'rgba(255,215,0,0.4)',
+    borderColor: Colors.goldBorder,
     backgroundColor: 'rgba(255,215,0,0.1)',
   },
   chipGoldText: {

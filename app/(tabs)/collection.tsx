@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { Alert, FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -25,10 +25,16 @@ import {
   CollectionFilters, EMPTY_FILTERS,
   activeFilterCount, applyFilters,
 } from '@/lib/filters/collection';
+import { copyLabel } from '@/lib/grading/constants';
 import { fmt } from '@/lib/format';
 import { useAuth } from '@/lib/auth/AuthContext';
-import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, Radius, Shadows, Spacing } from '@/constants/theme';
 import { Card, cardBaseName, cardNameVariant } from '@/types';
+
+// One grid tile: a card plus its per-copy badge (e.g. "PSA 10 · Holo").
+// `key` is the collection_item id — stable across filter/sort changes so the
+// FlatList never remounts surviving cells.
+type CellItem = { key: string; card: Card; badge: string | null };
 
 function signed(n: number): string {
   if (n === 0) return `$${fmt(0)}`;
@@ -192,6 +198,7 @@ function BulkActionBar({
 
 interface CardCellProps {
   card: Card;
+  badge?: string | null;
   index: number;
   selected: boolean;
   selectionMode: boolean;
@@ -199,7 +206,7 @@ interface CardCellProps {
   onLongPress: (card: Card) => void;
 }
 
-function CardCell({ card, index, selected, selectionMode, onPress, onLongPress }: CardCellProps) {
+const CardCell = memo(function CardCell({ card, badge, index, selected, selectionMode, onPress, onLongPress }: CardCellProps) {
   return (
     <Animated.View
       entering={FadeInDown.delay(index * 20).duration(280)}
@@ -231,6 +238,11 @@ function CardCell({ card, index, selected, selectionMode, onPress, onLongPress }
           )}
         </Text>
         <Text style={styles.cardSet} numberOfLines={1}>{card.set}</Text>
+        {badge && (
+          <View style={styles.copyBadge}>
+            <Text style={styles.copyBadgeText} numberOfLines={1}>{badge}</Text>
+          </View>
+        )}
         <View style={styles.priceRow}>
           {card.value > 0 ? (
             <>
@@ -248,7 +260,7 @@ function CardCell({ card, index, selected, selectionMode, onPress, onLongPress }
       </View>
     </Animated.View>
   );
-}
+});
 
 type ViewMode = 'cards' | 'sets';
 
@@ -354,11 +366,18 @@ export default function CollectionScreen() {
 
   const visible = useMemo(() => applyFilters(entries, filters), [entries, filters]);
   const cards   = useMemo(() => visible.map(e => e.card), [visible]);
+  const cells   = useMemo<CellItem[]>(
+    () => visible.map(e => ({ key: e.item_id, card: e.card, badge: copyLabel(e) })),
+    [visible],
+  );
 
-  const pairs: [Card, Card | null][] = [];
-  for (let i = 0; i < cards.length; i += 2) {
-    pairs.push([cards[i], cards[i + 1] ?? null]);
-  }
+  const pairs = useMemo(() => {
+    const out: [CellItem, CellItem | null][] = [];
+    for (let i = 0; i < cells.length; i += 2) {
+      out.push([cells[i], cells[i + 1] ?? null]);
+    }
+    return out;
+  }, [cells]);
 
   const activeCount = activeFilterCount(filters);
   const headerCount = isLoading
@@ -368,12 +387,15 @@ export default function CollectionScreen() {
       : `${entries.length} cards · ${new Set(entries.map(e => e.card.set)).size} sets`;
 
   type Row =
-    | { kind: 'card'; pair: [Card, Card | null]; index: number }
+    | { kind: 'card'; pair: [CellItem, CellItem | null]; index: number }
     | { kind: 'set';  set: SetCompletion };
 
-  const rows: Row[] = viewMode === 'cards'
-    ? pairs.map((pair, index) => ({ kind: 'card' as const, pair, index }))
-    : setRows.map(set => ({ kind: 'set' as const, set }));
+  const rows: Row[] = useMemo(
+    () => viewMode === 'cards'
+      ? pairs.map((pair, index) => ({ kind: 'card' as const, pair, index }))
+      : setRows.map(set => ({ kind: 'set' as const, set })),
+    [viewMode, pairs, setRows],
+  );
 
   const listLoading = viewMode === 'cards' ? isLoading : setsLoading;
   const portfolioVisible = portfolio.itemCount > 0;
@@ -382,8 +404,8 @@ export default function CollectionScreen() {
     <>
       <FlatList<Row>
         data={listLoading ? [] : rows}
-        keyExtractor={(row, i) =>
-          row.kind === 'set' ? `set-${row.set.setName}` : `card-${i}`
+        keyExtractor={row =>
+          row.kind === 'set' ? `set-${row.set.setName}` : `card-${row.pair[0].key}`
         }
         style={styles.screen}
         contentContainerStyle={[styles.content, { paddingTop: insets.top + 16, paddingBottom: 100 }]}
@@ -556,18 +578,20 @@ export default function CollectionScreen() {
           return (
             <View style={styles.row}>
               <CardCell
-                card={left}
+                card={left.card}
+                badge={left.badge}
                 index={item.index * 2}
-                selected={selectedIds.has(left.id)}
+                selected={selectedIds.has(left.card.id)}
                 selectionMode={selectionMode}
                 onPress={handleCardPress}
                 onLongPress={handleCardLongPress}
               />
               {right ? (
                 <CardCell
-                  card={right}
+                  card={right.card}
+                  badge={right.badge}
                   index={item.index * 2 + 1}
-                  selected={selectedIds.has(right.id)}
+                  selected={selectedIds.has(right.card.id)}
                   selectionMode={selectionMode}
                   onPress={handleCardPress}
                   onLongPress={handleCardLongPress}
@@ -679,12 +703,12 @@ const styles = StyleSheet.create({
   bindersBtn: {
     width: 40,
     height: 40,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   eyebrow: {
     fontFamily: FontFamily.mono,
@@ -736,10 +760,10 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingHorizontal: 18,
     paddingVertical: 9,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   emptyResetText: {
     fontFamily: FontFamily.mono,
@@ -803,6 +827,23 @@ const styles = StyleSheet.create({
     marginTop: 2,
     textTransform: 'uppercase',
   },
+  copyBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,215,0,0.35)',
+    backgroundColor: 'rgba(255,215,0,0.1)',
+  },
+  copyBadgeText: {
+    fontFamily: FontFamily.mono,
+    fontSize: 8.5,
+    letterSpacing: 0.4,
+    color: Colors.gold,
+    textTransform: 'uppercase',
+  },
   priceRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -848,7 +889,7 @@ const styles = StyleSheet.create({
   syncBannerBtn: {
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: 'rgba(255,92,92,0.4)',
   },
@@ -924,13 +965,13 @@ const styles = StyleSheet.create({
   viewToggleBtn: {
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
   },
   viewToggleBtnActive: {
-    backgroundColor: 'rgba(255,215,0,0.12)',
-    borderColor: 'rgba(255,215,0,0.4)',
+    backgroundColor: Colors.goldTint,
+    borderColor: Colors.goldBorder,
   },
   viewToggleText: {
     fontFamily: FontFamily.mono,
@@ -1005,11 +1046,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.elevated,
     borderWidth: 1,
     borderColor: Colors.line,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 16,
-    elevation: 12,
+    ...Shadows.raised,
   },
   bulkBarInner: {
     flexDirection: 'row',
@@ -1019,12 +1056,12 @@ const styles = StyleSheet.create({
   bulkClose: {
     width: 36,
     height: 36,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   bulkCount: {
     flex: 1,
@@ -1043,10 +1080,10 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 9,
-    borderRadius: 999,
+    borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   bulkActionLabel: {
     fontFamily: FontFamily.mono,
@@ -1057,7 +1094,7 @@ const styles = StyleSheet.create({
   // ── Binder picker sheet (reused styling pattern) ──────────────────────
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: Colors.scrim,
   },
   sheet: {
     position: 'absolute',

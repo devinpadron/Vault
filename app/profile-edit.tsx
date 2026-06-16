@@ -5,7 +5,9 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Share,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -17,7 +19,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/ui/Avatar';
 import { Icon } from '@/components/ui/Icon';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
-import { avatarFor, useMyProfile, useSetAvatar, useUpdateProfile } from '@/lib/api/profiles';
+import {
+  avatarFor,
+  useMyProfile,
+  useProfileCollections,
+  useSetAvatar,
+  useUpdateProfile,
+} from '@/lib/api/profiles';
 import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 
 const USERNAME_RE = /^[a-z0-9_]{3,24}$/;
@@ -31,6 +39,15 @@ export default function ProfileEditScreen() {
   const [username, setUsername]       = useState('');
   const [displayName, setDisplayName] = useState('');
   const [bio, setBio]                 = useState('');
+  const [showcasePublic, setShowcasePublic] = useState(false);
+  const [showcaseIds, setShowcaseIds] = useState<string[]>([]);
+
+  const { data: collections = [] } = useProfileCollections(profile?.id);
+  // Only public binders can be featured publicly.
+  const publicBinders = useMemo(
+    () => collections.filter(c => c.kind === 'binder' && c.is_public),
+    [collections],
+  );
 
   // Hydrate form once the profile loads.
   useEffect(() => {
@@ -38,8 +55,13 @@ export default function ProfileEditScreen() {
       setUsername(profile.username);
       setDisplayName(profile.display_name ?? '');
       setBio(profile.bio ?? '');
+      setShowcasePublic(profile.is_showcase_public ?? false);
+      setShowcaseIds(profile.showcase_binder_ids ?? []);
     }
   }, [profile]);
+
+  const toggleBinder = (id: string) =>
+    setShowcaseIds(ids => (ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]));
 
   const usernameError = useMemo(() => {
     if (!username) return 'Username is required';
@@ -47,11 +69,15 @@ export default function ProfileEditScreen() {
     return null;
   }, [username]);
 
+  const sameIds = (a: string[], b: string[]) =>
+    a.length === b.length && a.every((x, i) => x === b[i]);
   const dirty =
     profile && (
       username !== profile.username ||
       displayName !== (profile.display_name ?? '') ||
-      bio !== (profile.bio ?? '')
+      bio !== (profile.bio ?? '') ||
+      showcasePublic !== (profile.is_showcase_public ?? false) ||
+      !sameIds(showcaseIds, profile.showcase_binder_ids ?? [])
     );
 
   async function pickAvatar() {
@@ -94,6 +120,8 @@ export default function ProfileEditScreen() {
         username,
         display_name: displayName,
         bio,
+        is_showcase_public: showcasePublic,
+        showcase_binder_ids: showcaseIds,
       });
       router.back();
     } catch (e) {
@@ -233,6 +261,69 @@ export default function ProfileEditScreen() {
           />
           <Text style={styles.hint}>{bio.length}/200</Text>
         </Field>
+
+        <View style={styles.showcaseDivider} />
+
+        <Field label="Public showcase">
+          <View style={styles.toggleRow}>
+            <View style={styles.toggleText}>
+              <Text style={styles.toggleTitle}>Shareable profile</Text>
+              <Text style={styles.toggleSub}>
+                Anyone with your link sees the binders you feature below.
+              </Text>
+            </View>
+            <Switch
+              value={showcasePublic}
+              onValueChange={setShowcasePublic}
+              trackColor={{ false: Colors.line, true: Colors.gold }}
+              thumbColor="#fff"
+            />
+          </View>
+
+          {showcasePublic && (
+            <>
+              <TouchableOpacity
+                style={styles.shareBtn}
+                onPress={() =>
+                  Share.share({
+                    message: `Check out my Vault collection: https://vault.app/u/${username}`,
+                    url: `https://vault.app/u/${username}`,
+                  })
+                }
+              >
+                <Icon name="share" size={14} color={Colors.gold} />
+                <Text style={styles.shareText}>vault.app/u/{username}</Text>
+              </TouchableOpacity>
+
+              <Text style={styles.featureLabel}>FEATURED BINDERS</Text>
+              {publicBinders.length === 0 ? (
+                <Text style={styles.featureEmpty}>
+                  Make a binder public to feature it here.
+                </Text>
+              ) : (
+                <View style={styles.binderList}>
+                  {publicBinders.map(b => {
+                    const on = showcaseIds.includes(b.id);
+                    return (
+                      <TouchableOpacity
+                        key={b.id}
+                        style={[styles.binderChip, on && styles.binderChipOn]}
+                        onPress={() => toggleBinder(b.id)}
+                        activeOpacity={0.85}
+                      >
+                        <View style={[styles.checkbox, on && styles.checkboxOn]}>
+                          {on && <Icon name="check" size={11} color="#0A0A0C" />}
+                        </View>
+                        <Text style={styles.binderChipText} numberOfLines={1}>{b.name}</Text>
+                        <Text style={styles.binderChipMeta}>{b.item_count}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </>
+          )}
+        </Field>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -286,7 +377,7 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     fontSize: 11,
     letterSpacing: 1.6,
-    color: '#0A0A0C',
+    color: Colors.bg,
   },
   saveBtnTextDisabled: { color: 'rgba(10,10,12,0.5)' },
 
@@ -359,4 +450,36 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   error: { fontFamily: FontFamily.mono, fontSize: 10, color: Colors.down, marginTop: 6 },
+
+  showcaseDivider: { height: 1, backgroundColor: Colors.line, marginBottom: 22 },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  toggleText: { flex: 1 },
+  toggleTitle: { fontFamily: FontFamily.bodySemi, fontSize: 14, color: Colors.text },
+  toggleSub: { fontFamily: FontFamily.body, fontSize: 12, color: Colors.text3, marginTop: 3, lineHeight: 16 },
+  shareBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginTop: 16, paddingVertical: 12, paddingHorizontal: 14,
+    borderRadius: Radius.md, borderWidth: 1, borderColor: 'rgba(255,215,0,0.3)',
+    backgroundColor: 'rgba(255,215,0,0.06)',
+  },
+  shareText: { fontFamily: FontFamily.mono, fontSize: 12, color: Colors.gold, letterSpacing: 0.4 },
+  featureLabel: {
+    fontFamily: FontFamily.mono, fontSize: 9, letterSpacing: 1.6,
+    color: Colors.text3, marginTop: 22, marginBottom: 12,
+  },
+  featureEmpty: { fontFamily: FontFamily.body, fontSize: 13, color: Colors.text3 },
+  binderList: { gap: 8 },
+  binderChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 12, paddingHorizontal: 14, borderRadius: Radius.md,
+    borderWidth: 1, borderColor: Colors.line, backgroundColor: Colors.surface,
+  },
+  binderChipOn: { borderColor: Colors.goldBorder, backgroundColor: 'rgba(255,215,0,0.05)' },
+  checkbox: {
+    width: 20, height: 20, borderRadius: 6, borderWidth: 1, borderColor: Colors.lineStrong,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  checkboxOn: { backgroundColor: Colors.gold, borderColor: Colors.gold },
+  binderChipText: { flex: 1, fontFamily: FontFamily.body, fontSize: 14, color: Colors.text },
+  binderChipMeta: { fontFamily: FontFamily.mono, fontSize: 11, color: Colors.text3 },
 });

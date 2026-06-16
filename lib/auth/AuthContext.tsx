@@ -11,6 +11,7 @@ import {
   wipeLocalUserData,
 } from '@/lib/db/cloud-sync';
 import { prewarmFromLocalCollection } from '@/lib/api/sync-client';
+import { registerPushToken, unregisterPushToken } from '@/lib/notifications/push';
 import { avatarFor } from '@/lib/avatar';
 import { User } from '@/types';
 
@@ -98,9 +99,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       prewarmFromLocalCollection().catch(err => {
         if (__DEV__) console.warn('[auth] prewarm failed:', err);
       });
+      // Register this device for push (activity, friend requests). Best-effort —
+      // a no-op on simulators / when permission is denied.
+      registerPushToken(uid).catch(err => {
+        if (__DEV__) console.warn('[auth] push registration failed:', err);
+      });
       setState(s => ({ ...s, mirrorSync: { state: 'ready', error: null } }));
     } catch (err) {
-      console.warn('[auth] post-signin sync failed:', err);
+      if (__DEV__) console.warn('[auth] post-signin sync failed:', err);
       setState(s => ({
         ...s,
         mirrorSync: { state: 'error', error: err as Error },
@@ -183,6 +189,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function logout(): Promise<void> {
     manualSignOut.current = true;
+    // Drop this device's push token while still authenticated (RLS needs it).
+    await unregisterPushToken().catch(() => {});
     await supabase.auth.signOut();
     // onAuthStateChange handles state update; manualSignOut.current is
     // consumed there and reset to false.

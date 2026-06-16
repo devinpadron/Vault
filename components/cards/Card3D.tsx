@@ -17,6 +17,7 @@ import {
   type SkImage,
 } from '@shopify/react-native-skia';
 import { Card } from '@/types';
+import { Colors } from '@/constants/theme';
 
 interface Props {
   card: Card;
@@ -32,24 +33,88 @@ const MAX_TILT = 24;
 // Extra canvas pixels on every side so the scaled/tilted card never clips.
 const OVERFLOW = 24;
 
-/** Fetches a remote image URL and decodes it into a Skia SkImage. */
-function useNetworkImage(url?: string): SkImage | null {
-  const [image, setImage] = useState<SkImage | null>(null);
+// ── Decoded-image cache ──────────────────────────────────────────────────────
+// Card art comes back at print resolution (~2000×2800); decoding that for a
+// 158 pt grid cell wastes ~20 MB per card and re-runs on every mount. Decode
+// once per (url, size bucket), downscale to ≤3× the display width, and keep
+// the results in a small module-level LRU shared by every Card3D instance.
+
+const imageCache = new Map<string, SkImage>();           // insertion order = LRU
+const inflightLoads = new Map<string, Promise<SkImage | null>>();
+const IMAGE_CACHE_MAX = 64;
+
+function sizeBucket(displayWidth: number): number {
+  const target = displayWidth * 3; // covers 3× retina
+  if (target <= 256) return 256;
+  if (target <= 512) return 512;
+  return 1024;
+}
+
+async function loadSkImage(url: string, bucket: number): Promise<SkImage | null> {
+  const res = await fetch(url);
+  const buf = await res.arrayBuffer();
+  const data = Skia.Data.fromBytes(new Uint8Array(buf));
+  const full = Skia.Image.MakeImageFromEncoded(data);
+  if (!full) return null;
+  if (full.width() <= bucket) return full;
+
+  const scale = bucket / full.width();
+  const w = Math.round(full.width() * scale);
+  const h = Math.round(full.height() * scale);
+  const surface = Skia.Surface.Make(w, h);
+  if (!surface) return full;
+  surface.getCanvas().drawImageRect(
+    full,
+    Skia.XYWHRect(0, 0, full.width(), full.height()),
+    Skia.XYWHRect(0, 0, w, h),
+    Skia.Paint(),
+  );
+  const scaled = surface.makeImageSnapshot().makeNonTextureImage();
+  full.dispose();
+  surface.dispose();
+  return scaled;
+}
+
+/** Fetches + decodes a remote image into a display-sized SkImage, cached. */
+function useNetworkImage(url: string | undefined, displayWidth: number): SkImage | null {
+  const key = url ? `${url}@${sizeBucket(displayWidth)}` : null;
+  const [image, setImage] = useState<SkImage | null>(
+    () => (key && imageCache.get(key)) || null,
+  );
 
   useEffect(() => {
-    if (!url) return;
+    if (!url || !key) return;
+    const cached = imageCache.get(key);
+    if (cached) {
+      // LRU bump.
+      imageCache.delete(key);
+      imageCache.set(key, cached);
+      setImage(cached);
+      return;
+    }
     let active = true;
-    fetch(url)
-      .then((r) => r.arrayBuffer())
-      .then((buf) => {
-        if (!active) return;
-        const data = Skia.Data.fromBytes(new Uint8Array(buf));
-        const img = Skia.Image.MakeImageFromEncoded(data);
-        if (img) setImage(img);
+    let load = inflightLoads.get(key);
+    if (!load) {
+      load = loadSkImage(url, sizeBucket(displayWidth))
+        .finally(() => inflightLoads.delete(key));
+      inflightLoads.set(key, load);
+    }
+    load
+      .then(img => {
+        if (!img) return;
+        imageCache.delete(key);
+        imageCache.set(key, img);
+        while (imageCache.size > IMAGE_CACHE_MAX) {
+          // Drop the least-recently-used entry; GC finalizes the SkImage once
+          // no mounted card still references it.
+          const oldest = imageCache.keys().next().value as string;
+          imageCache.delete(oldest);
+        }
+        if (active) setImage(img);
       })
       .catch(() => {});
     return () => { active = false; };
-  }, [url]);
+  }, [url, key, displayWidth]);
 
   return image;
 }
@@ -96,7 +161,7 @@ export function Card3D({ card, width, large = false, onPress, onLongPress, sway 
     swayT0.value = -1;
   }, [swayOn, swayT0]);
 
-  const cardImage = useNetworkImage(card.imageUrl);
+  const cardImage = useNetworkImage(card.imageUrl, width);
 
   // Clip path used to confine the foil shimmer to the card's rounded bounds.
   const cardClip = useMemo(
@@ -182,7 +247,11 @@ export function Card3D({ card, width, large = false, onPress, onLongPress, sway 
     .minDuration(380)
     .runOnJS(true)
     .onStart(() => {
-      if (onLongPress) onLongPress();
+      if (onLongPress) {
+        // Confirm entry into selection mode under the finger.
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+        onLongPress();
+      }
     });
 
   // Race: whichever activates first wins — quick lift = tap, hold = long-press,
@@ -235,7 +304,7 @@ export function Card3D({ card, width, large = false, onPress, onLongPress, sway 
                 end={vec(width * 0.85, height * 0.6)}
                 colors={[
                   'rgba(255,255,255,0.22)',
-                  'rgba(255,255,255,0.04)',
+                  Colors.glass,
                   'rgba(255,255,255,0)',
                 ]}
                 positions={[0, 0.35, 1]}

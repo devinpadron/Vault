@@ -7,6 +7,7 @@ import { Icon } from '@/components/ui/Icon';
 import { SkeletonRow } from '@/components/ui/SkeletonRow';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { useFriends, useIncomingFriendRequests } from '@/lib/api/friends';
+import { useUnreadNotificationCount } from '@/lib/api/notifications';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 import { Friend } from '@/types';
 
@@ -14,6 +15,8 @@ export default function FriendsScreen() {
   const insets = useSafeAreaInsets();
   const { data: friends = [], isLoading, isError, refetch } = useFriends();
   const { data: requests = [] } = useIncomingFriendRequests();
+  const unread = useUnreadNotificationCount();
+  const hasAlerts = requests.length > 0 || unread > 0;
 
   return (
     <ScrollView
@@ -34,11 +37,11 @@ export default function FriendsScreen() {
           <View style={styles.actions}>
             <TouchableOpacity
               style={styles.iconBtn}
-              onPress={() => router.push('/friend-requests')}
-              accessibilityLabel="Friend requests"
+              onPress={() => router.push('/notifications')}
+              accessibilityLabel="Notifications"
             >
               <Icon name="bell" size={18} color={Colors.text} />
-              {requests.length > 0 && <View style={styles.badge} />}
+              {hasAlerts && <View style={styles.badge} />}
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.iconBtn}
@@ -52,6 +55,19 @@ export default function FriendsScreen() {
       </View>
 
       {isError && <ErrorPanel message="Failed to load friends" onRetry={refetch} />}
+
+      <TouchableOpacity
+        style={styles.activityBanner}
+        onPress={() => router.push('/activity')}
+        activeOpacity={0.9}
+      >
+        <Icon name="activity" size={16} color={Colors.gold} />
+        <View style={styles.activityBannerText}>
+          <Text style={styles.activityTitle}>Activity</Text>
+          <Text style={styles.activitySub}>See what your circle is up to</Text>
+        </View>
+        <Icon name="chevron-right" size={14} color={Colors.text3} />
+      </TouchableOpacity>
 
       {!isError && requests.length > 0 && (
         <TouchableOpacity
@@ -155,7 +171,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: Colors.line,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: Colors.glass,
   },
   badge: {
     position: 'absolute',
@@ -167,6 +183,20 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.gold,
   },
 
+  activityBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: Colors.surface,
+    marginBottom: 16,
+  },
+  activityBannerText: { flex: 1 },
+  activityTitle: { fontFamily: FontFamily.bodySemi, fontSize: 14, color: Colors.text },
+  activitySub: { fontFamily: FontFamily.body, fontSize: 12, color: Colors.text3, marginTop: 2 },
   requestsBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -175,7 +205,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: 'rgba(255,215,0,0.3)',
-    backgroundColor: 'rgba(255,215,0,0.08)',
+    backgroundColor: Colors.goldFaint,
     marginBottom: 16,
   },
   requestsBannerLeft: { gap: 4 },
@@ -224,5 +254,5 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     backgroundColor: Colors.gold,
   },
-  emptyBtnText: { fontFamily: FontFamily.mono, fontSize: 11, color: '#0A0A0C', letterSpacing: 1.5 },
+  emptyBtnText: { fontFamily: FontFamily.mono, fontSize: 11, color: Colors.bg, letterSpacing: 1.5 },
 });

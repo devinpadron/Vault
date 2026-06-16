@@ -105,8 +105,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: Radius.full,
     borderWidth: 1,
-    borderColor: 'rgba(255,215,0,0.4)',
-    backgroundColor: 'rgba(255,215,0,0.08)',
+    borderColor: Colors.goldBorder,
+    backgroundColor: Colors.goldFaint,
   },
   chipLabel: {
     fontFamily: FontFamily.mono,

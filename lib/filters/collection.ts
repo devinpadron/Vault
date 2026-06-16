@@ -49,10 +49,15 @@ export const EMPTY_FILTERS: CollectionFilters = {
 };
 
 export interface CollectionEntry {
+  item_id:        string;         // collection_item id — identifies this physical copy
   card:           Card;
   added_at:       number;
   acquired_price: number | null;  // USD cost basis, null = not set
   acquired_at:    number | null;  // epoch ms acquisition date, null = unknown
+  variant_name:   string | null;  // chosen printing (display), null = any/standard
+  condition:      string | null;  // NM | LP | … (raw copies)
+  grader:         string | null;  // PSA | CGC | … (graded copies)
+  grade:          string | null;  // '10' | '9.5' | … (graded copies)
 }
 
 // ─── Apply ───────────────────────────────────────────────────────────────────

@@ -42,19 +42,18 @@ Friends already exist; extend the relationship so it can actually *do*
 something.
 
 - **Friend collection diff** — "you both own 12 cards; you have 8 they don't;
-  they have 5 you don't." Natural trade seeding.
-- **Trade proposals** — structured offer flow (your cards + cash ↔ their
-  cards), value totals shown, history kept.
-- **Activity feed** — friends added cards, hit set milestones, listed
-  something. Light, optional.
+  they have 5 you don't." A pure ownership comparison. **✓ Shipped**
+- ~~**Trade proposals**~~ — **Removed.** Cards are held physically; the app only
+  shows who owns what, so there is no in-app trading.
+- **Activity feed** — friends added cards, hit set milestones, published a
+  binder. Light, optional. **✓ Shipped**
 - **Public showcase profile** — opt-in shareable link (`vault.app/u/devin`)
-  showing chosen binders. Acquisition loop.
+  showing chosen binders. Acquisition loop. **✓ Shipped**
 
 ## Market & commerce
 
 - **Listings from collection** — one tap "list for sale" from any owned card,
-  with suggested price from comp data. Even without payment processing, just
-  exposing intent unlocks the trade flow.
+  with suggested price from comp data.
 - **Comparable sales graph on card detail** — last 30 / 90 days of comps with
   grade filter (raw / PSA 9 / PSA 10). Pricing today is a single number;
   collectors want the distribution.
@@ -94,10 +93,9 @@ If only five can ship, in this order:
 1. **Portfolio screen** with sparkline + top movers
 2. **Bulk scan mode**
 3. **Price alerts**
-4. **Friend collection diff** → trade proposal flow
+4. **Friend collection diff** — ownership comparison
 5. **CSV import / export**
 
 These compound: portfolio gives a reason to keep checking the app; bulk scan
-and import populate it fast; alerts pull users back; and the social trade
-loop is the only feature here that doesn't depend on Vault for distribution
-to grow.
+and import populate it fast; alerts pull users back; and the friend diff is
+the only feature here that doesn't depend on Vault for distribution to grow.
