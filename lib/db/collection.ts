@@ -16,9 +16,19 @@ import {
   setItemCostBasis,
   setItemCostBasisById,
 } from './cloud-sync';
+import { autoFileCardIntoBinders } from '@/lib/api/binders';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { Card } from '@/types';
 import { CollectionEntry } from '@/lib/filters/collection';
+
+// Smart binders read live off the collection, and auto-add binders pull in
+// matching cards on intake — so any collection write must refresh the binder
+// caches too. Centralized here so add/remove paths stay consistent.
+function invalidateBinderQueries(queryClient: ReturnType<typeof useQueryClient>, userId: string) {
+  queryClient.invalidateQueries({ queryKey: ['binders', userId] });
+  queryClient.invalidateQueries({ queryKey: ['binder', userId] });
+  queryClient.invalidateQueries({ queryKey: ['binder-cards'] });
+}
 
 // Returns the user's main-collection items paired with their added_at
 // timestamp — needed for "Recently added" / "Oldest first" sort options.
@@ -100,10 +110,14 @@ export function useAddToCollection() {
     if (!user) throw new Error('Sign in to save cards.');
     const collectionId = await getOrCreateDefaultCollection(user.id, 'collection', 'Main');
     await addItemToCollection(collectionId, card, details);
+    // File the card into any auto-add binder it matches. Best-effort — a binder
+    // file failing shouldn't fail the collection add.
+    await autoFileCardIntoBinders(user.id, card).catch(() => {});
     queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
     queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, card.id] });
     queryClient.invalidateQueries({ queryKey: ['collection-copies', user.id, card.id] });
     queryClient.invalidateQueries({ queryKey: ['portfolio-history', user.id] });
+    invalidateBinderQueries(queryClient, user.id);
   };
 }
 
@@ -165,6 +179,9 @@ export function useRemoveFromCollection() {
     queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, cardId] });
     queryClient.invalidateQueries({ queryKey: ['collection-copies', user.id, cardId] });
     queryClient.invalidateQueries({ queryKey: ['portfolio-history', user.id] });
+    // Virtual smart binders mirror the collection, so they must drop this card.
+    // Auto-add binders keep their persisted copy by design.
+    invalidateBinderQueries(queryClient, user.id);
   };
 }
 

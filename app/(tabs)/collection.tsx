@@ -639,7 +639,7 @@ export default function CollectionScreen() {
               No binders yet. Create one from the Binders tab.
             </Text>
           ) : (
-            binderList.filter(b => !b.rules).map(b => (
+            binderList.filter(b => !b.rules || b.rules.autoAdd).map(b => (
               <TouchableOpacity
                 key={b.id}
                 style={styles.binderRow}

@@ -157,7 +157,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // exist for new accounts, drains any queue left over from a previous
         // session, then prewarms pricing. Surfaces sync state through
         // AuthContext so the UI can show a retry banner on failure.
-        runPostSigninSync(uid);
+        //
+        // Defer out of the caller's stack with setTimeout(0): applySession runs
+        // synchronously inside the supabase onAuthStateChange callback, which
+        // holds an internal auth lock. Calling supabase.from()/auth.getUser()
+        // from runPostSigninSync while that lock is held deadlocks — the pull
+        // hangs forever and the mirror is never populated, so a fresh sign-in
+        // renders an empty collection. Running it on the next tick releases the
+        // lock first. (See supabase-js onAuthStateChange guidance.)
+        setTimeout(() => {
+          runPostSigninSync(uid);
+        }, 0);
       }
     }
 

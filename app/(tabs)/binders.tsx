@@ -1,4 +1,23 @@
-import { useMemo, useState } from 'react';
+import {
+  SmartRulesEditor,
+  deriveRuleOptions,
+  rulesHaveAtLeastOneFilter,
+} from "@/components/binders/SmartRulesEditor";
+import { CardThumb } from "@/components/cards/CardThumb";
+import { ErrorPanel } from "@/components/ui/ErrorPanel";
+import { Icon } from "@/components/ui/Icon";
+import { Colors, FontFamily, Radius, Spacing } from "@/constants/theme";
+import { useBinders, useCreateBinder } from "@/lib/api/binders";
+import { useAllSetNames } from "@/lib/api/cards";
+import { ALL_RARITIES } from "@/lib/api/types";
+import { TONE_PAIRS } from "@/lib/binder-tones";
+import { SmartBinderRules } from "@/lib/db/cloud-sync";
+import { useCollectionEntries } from "@/lib/db/collection";
+import { Binder } from "@/types";
+import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
+import { router } from "expo-router";
+import { useMemo, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -10,26 +29,9 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import * as Haptics from 'expo-haptics';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
-import Animated, { FadeInDown } from 'react-native-reanimated';
-import { CardThumb } from '@/components/cards/CardThumb';
-import { Icon } from '@/components/ui/Icon';
-import { ErrorPanel } from '@/components/ui/ErrorPanel';
-import { useBinders, useCreateBinder } from '@/lib/api/binders';
-import { useCollectionEntries } from '@/lib/db/collection';
-import { SmartBinderRules } from '@/lib/db/cloud-sync';
-import {
-  SmartRulesEditor,
-  deriveRuleOptions,
-  rulesHaveAtLeastOneFilter,
-} from '@/components/binders/SmartRulesEditor';
-import { TONE_PAIRS } from '@/lib/binder-tones';
-import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
-import { Binder } from '@/types';
+} from "react-native";
+import Animated, { FadeInDown } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function BindersScreen() {
   const insets = useSafeAreaInsets();
@@ -38,43 +40,66 @@ export default function BindersScreen() {
   const totalCards = binders.reduce((sum, b) => sum + b.count, 0);
 
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [binderName, setBinderName] = useState('');
-  const [selectedTone, setSelectedTone] = useState<[string, string]>(TONE_PAIRS[0]);
+  const [binderName, setBinderName] = useState("");
+  const [selectedTone, setSelectedTone] = useState<[string, string]>(
+    TONE_PAIRS[0],
+  );
   const [isSmart, setIsSmart] = useState(false);
-  const [draftRules, setDraftRules] = useState<SmartBinderRules>({ match: 'all' });
+  const [draftRules, setDraftRules] = useState<SmartBinderRules>({
+    match: "all",
+  });
 
   const { data: entries = [] } = useCollectionEntries();
+  const { data: allSets = [] } = useAllSetNames();
   const ruleOptions = useMemo(
-    () => deriveRuleOptions(entries.map(e => ({ set: e.card.set, rarity: e.card.rarity }))),
+    () =>
+      deriveRuleOptions(
+        entries.map((e) => ({ set: e.card.set, rarity: e.card.rarity })),
+      ),
     [entries],
+  );
+  // Owned options first (familiar), then the rest of the catalog so users can
+  // pick sets / rarities they don't own yet.
+  const availableSets = useMemo(
+    () => Array.from(new Set([...ruleOptions.sets, ...allSets])),
+    [ruleOptions.sets, allSets],
+  );
+  const availableRarities = useMemo(
+    () => Array.from(new Set([...ruleOptions.rarities, ...ALL_RARITIES])),
+    [ruleOptions.rarities],
   );
 
   function openSheet() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setBinderName('');
+    setBinderName("");
     setSelectedTone(TONE_PAIRS[0]);
     setIsSmart(false);
-    setDraftRules({ match: 'all' });
+    setDraftRules({ match: "all" });
     setSheetOpen(true);
   }
 
   async function handleCreate() {
     if (!binderName.trim()) {
-      Alert.alert('Name required', 'Please enter a binder name.');
+      Alert.alert("Name required", "Please enter a binder name.");
       return;
     }
     let rules: SmartBinderRules | null = null;
     if (isSmart) {
       if (!rulesHaveAtLeastOneFilter(draftRules)) {
         Alert.alert(
-          'Pick at least one filter',
-          'A smart binder needs at least one rule — pick a set, rarity, supertype, value range, or other condition.',
+          "Pick at least one filter",
+          "A smart binder needs at least one rule — pick a set, rarity, supertype, value range, or other condition.",
         );
         return;
       }
-      rules = draftRules;
+      rules = { ...draftRules, autoAdd: true }; // smart binders always auto-add
     }
-    await createBinder(binderName.trim(), selectedTone[0], selectedTone[1], rules);
+    await createBinder(
+      binderName.trim(),
+      selectedTone[0],
+      selectedTone[1],
+      rules,
+    );
     setSheetOpen(false);
   }
 
@@ -82,7 +107,10 @@ export default function BindersScreen() {
     <>
       <ScrollView
         style={styles.screen}
-        contentContainerStyle={[styles.content, { paddingTop: insets.top + 16, paddingBottom: 100 }]}
+        contentContainerStyle={[
+          styles.content,
+          { paddingTop: insets.top + 16, paddingBottom: 100 },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}
@@ -104,30 +132,39 @@ export default function BindersScreen() {
           </TouchableOpacity>
         </View>
 
-        {isError && <ErrorPanel message="Failed to load binders" onRetry={refetch} />}
+        {isError && (
+          <ErrorPanel message="Failed to load binders" onRetry={refetch} />
+        )}
 
         {/* Binder cover cards */}
         <View style={styles.list}>
-          {isLoading
-            ? Array.from({ length: 3 }).map((_, i) => (
-                <View key={i} style={[styles.cover, { backgroundColor: Colors.surface, opacity: 0.5 }]} />
-              ))
-            : binders.length === 0
-            ? (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyTitle}>No binders yet</Text>
-                  <Text style={styles.emptySubtitle}>Tap + to create your first binder</Text>
-                </View>
-              )
-            : binders.map((binder, index) => (
-                <BinderCover
-                  key={binder.id}
-                  binder={binder}
-                  index={index}
-                  onPress={() => router.push(`/binder/${binder.id}`)}
-                />
-              ))
-          }
+          {isLoading ? (
+            Array.from({ length: 3 }).map((_, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.cover,
+                  { backgroundColor: Colors.surface, opacity: 0.5 },
+                ]}
+              />
+            ))
+          ) : binders.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>No binders yet</Text>
+              <Text style={styles.emptySubtitle}>
+                Tap + to create your first binder
+              </Text>
+            </View>
+          ) : (
+            binders.map((binder, index) => (
+              <BinderCover
+                key={binder.id}
+                binder={binder}
+                index={index}
+                onPress={() => router.push(`/binder/${binder.id}`)}
+              />
+            ))
+          )}
         </View>
       </ScrollView>
 
@@ -141,7 +178,7 @@ export default function BindersScreen() {
       >
         <KeyboardAvoidingView
           style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
           <TouchableOpacity
             style={styles.backdrop}
@@ -186,36 +223,48 @@ export default function BindersScreen() {
             {/* Smart binder toggle + inline rule editor */}
             <TouchableOpacity
               style={[styles.smartToggle, isSmart && styles.smartToggleActive]}
-              onPress={() => setIsSmart(v => !v)}
+              onPress={() => setIsSmart((v) => !v)}
               accessibilityRole="switch"
               accessibilityState={{ checked: isSmart }}
             >
-              <Icon name="flash" size={16} color={isSmart ? Colors.gold : Colors.text2} />
+              <Icon
+                name="flash"
+                size={16}
+                color={isSmart ? Colors.gold : Colors.text2}
+              />
               <View style={{ flex: 1 }}>
-                <Text style={[styles.smartToggleLabel, isSmart && styles.smartToggleLabelActive]}>
+                <Text
+                  style={[
+                    styles.smartToggleLabel,
+                    isSmart && styles.smartToggleLabelActive,
+                  ]}
+                >
                   Smart binder
                 </Text>
                 <Text style={styles.smartToggleHint}>
                   Auto-fills from your collection by set + rarity. Read-only.
                 </Text>
               </View>
-              <View style={[styles.smartIndicator, isSmart && styles.smartIndicatorActive]} />
+              <View
+                style={[
+                  styles.smartIndicator,
+                  isSmart && styles.smartIndicatorActive,
+                ]}
+              />
             </TouchableOpacity>
 
             {isSmart && (
-              <ScrollView style={styles.rulesScroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-                {ruleOptions.sets.length === 0 && ruleOptions.rarities.length === 0 ? (
-                  <Text style={styles.ruleEmpty}>
-                    Your collection is empty — add some cards before you can build a smart binder.
-                  </Text>
-                ) : (
-                  <SmartRulesEditor
-                    value={draftRules}
-                    onChange={setDraftRules}
-                    availableSets={ruleOptions.sets}
-                    availableRarities={ruleOptions.rarities}
-                  />
-                )}
+              <ScrollView
+                style={styles.rulesScroll}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
+                <SmartRulesEditor
+                  value={draftRules}
+                  onChange={setDraftRules}
+                  availableSets={availableSets}
+                  availableRarities={availableRarities}
+                />
               </ScrollView>
             )}
 
@@ -257,32 +306,55 @@ function BinderCover({
 
         {/* Spine shadow */}
         <LinearGradient
-          colors={['rgba(0,0,0,0.45)', 'transparent']}
+          colors={["rgba(0,0,0,0.45)", "transparent"]}
           start={{ x: 0, y: 0.5 }}
           end={{ x: 1, y: 0.5 }}
           style={styles.spine}
         />
+        {/* Spine seam — the fold between spine and cover the rings bind into */}
+        <View style={styles.spineSeam} />
 
-        {/* Ring dots */}
+        {/* Binder rings — hollow metal loops clamped over the spine seam, so the
+            card reads as a closed 3-ring binder rather than a tile with dots. */}
         <View style={styles.rings}>
-          {[0, 1, 2].map(k => (
-            <View key={k} style={styles.ring} />
+          {[0, 1, 2].map((k) => (
+            <View key={k} style={styles.ring}>
+              <View style={styles.ringHole} />
+            </View>
           ))}
         </View>
 
-        {/* Stacked card previews */}
-        <View style={[styles.cardPreview, { transform: [{ rotate: '-5deg' }], right: 54, top: 32, opacity: 0.75 }]}>
-          <CardThumb card={binder.cover} width={56} />
-        </View>
-        <View style={[styles.cardPreview, { transform: [{ rotate: '8deg' }], right: 18, top: 18 }]}>
-          <CardThumb card={binder.cover} width={68} />
+        {/* Stacked card previews — the first two distinct cover cards */}
+        {binder.covers[1] && (
+          <View
+            style={[
+              styles.cardPreview,
+              {
+                transform: [{ rotate: "-5deg" }],
+                right: 54,
+                top: 32,
+                opacity: 0.75,
+              },
+            ]}
+          >
+            <CardThumb card={binder.covers[1]} width={56} />
+          </View>
+        )}
+        <View
+          style={[
+            styles.cardPreview,
+            { transform: [{ rotate: "8deg" }], right: 18, top: 18 },
+          ]}
+        >
+          <CardThumb card={binder.covers[0] ?? binder.cover} width={68} />
         </View>
 
         {/* Metadata */}
         <View style={styles.meta}>
           <Text style={styles.binderName}>{binder.name}</Text>
           <Text style={styles.binderSubtitle}>
-            {binder.rules ? 'SMART · ' : ''}{binder.subtitle.toUpperCase()}
+            {binder.rules ? "SMART · " : ""}
+            {binder.subtitle.toUpperCase()}
           </Text>
           <View style={styles.countRow}>
             <Text style={styles.binderCount}>{binder.count}</Text>
@@ -301,10 +373,10 @@ function BinderCover({
         {/* Gloss highlight */}
         <LinearGradient
           colors={[
-            'rgba(255,255,255,0.20)',
-            'transparent',
-            'transparent',
-            'rgba(0,0,0,0.28)',
+            "rgba(255,255,255,0.20)",
+            "transparent",
+            "transparent",
+            "rgba(0,0,0,0.28)",
           ]}
           locations={[0, 0.3, 0.7, 1]}
           start={{ x: 0, y: 0 }}
@@ -326,16 +398,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
     marginBottom: 22,
   },
   eyebrow: {
     fontFamily: FontFamily.mono,
     fontSize: 10,
     letterSpacing: 1.6,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
     color: Colors.text3,
     marginBottom: 4,
   },
@@ -353,8 +425,8 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: Radius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     borderWidth: 1,
     borderColor: Colors.line,
     backgroundColor: Colors.glass,
@@ -364,7 +436,7 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   emptyState: {
-    alignItems: 'center',
+    alignItems: "center",
     paddingVertical: 60,
   },
   emptyTitle: {
@@ -382,70 +454,92 @@ const styles = StyleSheet.create({
   cover: {
     height: 168,
     borderRadius: 14,
-    overflow: 'hidden',
+    overflow: "hidden",
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    shadowColor: '#000',
+    borderColor: "rgba(255,255,255,0.1)",
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 16 },
     shadowOpacity: 0.5,
     shadowRadius: 20,
     elevation: 10,
   },
   spine: {
-    position: 'absolute',
+    position: "absolute",
     left: 0,
     top: 0,
     bottom: 0,
     width: 24,
   },
-  rings: {
-    position: 'absolute',
-    left: 6,
+  // The fold line where the spine meets the cover; the rings clamp over it.
+  spineSeam: {
+    position: "absolute",
+    left: 23,
     top: 0,
     bottom: 0,
-    justifyContent: 'space-evenly',
-    alignItems: 'center',
-    paddingVertical: 24,
+    width: 2,
+    backgroundColor: "rgba(0,0,0,0.28)",
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightColor: "rgba(255,255,255,0.18)",
   },
+  rings: {
+    position: "absolute",
+    left: 13, // sits the 22px loops on the spine, clear of the name
+    top: 0,
+    bottom: 0,
+    justifyContent: "space-evenly",
+    alignItems: "center",
+    paddingVertical: 30,
+  },
+  // Metal ring loop: a muted steel pill clamped over the spine seam…
   ring: {
-    width: 12,
+    width: 22,
     height: 12,
     borderRadius: 6,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.32)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
+    backgroundColor: "rgba(176,182,196,0.6)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.4)",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.45,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  // …with a dark slot through it so it reads as an open binder ring.
+  ringHole: {
+    width: 11,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(0,0,0,0.4)",
   },
   cardPreview: {
-    position: 'absolute',
+    position: "absolute",
   },
   meta: {
-    position: 'absolute',
-    left: 36,
+    position: "absolute",
+    left: 48,
     bottom: 18,
-    right: 100,
+    right: 120,
   },
   binderName: {
     fontFamily: FontFamily.display,
     fontSize: 22,
     color: Colors.text,
-    textShadowColor: 'rgba(0,0,0,0.4)',
+    textShadowColor: "rgba(0,0,0,0.4)",
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,
   },
   binderSubtitle: {
     fontFamily: FontFamily.mono,
     fontSize: 10,
-    color: 'rgba(255,255,255,0.7)',
+    color: "rgba(255,255,255,0.7)",
     marginTop: 4,
     letterSpacing: 1.2,
   },
   countRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
+    flexDirection: "row",
+    alignItems: "baseline",
     marginTop: 10,
   },
   binderCount: {
@@ -456,7 +550,7 @@ const styles = StyleSheet.create({
   binderCountLabel: {
     fontFamily: FontFamily.body,
     fontSize: 10,
-    color: 'rgba(255,255,255,0.6)',
+    color: "rgba(255,255,255,0.6)",
   },
   // Creation sheet
   backdrop: {
@@ -476,14 +570,14 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 2,
     backgroundColor: Colors.line,
-    alignSelf: 'center',
+    alignSelf: "center",
     marginBottom: 18,
   },
   sheetEyebrow: {
     fontFamily: FontFamily.mono,
     fontSize: 10,
     letterSpacing: 1.6,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
     color: Colors.text3,
     marginBottom: 4,
   },
@@ -506,7 +600,7 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   swatchRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 10,
     marginBottom: 20,
   },
@@ -514,9 +608,9 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 40,
     borderRadius: 8,
-    overflow: 'hidden',
+    overflow: "hidden",
     borderWidth: 2,
-    borderColor: 'transparent',
+    borderColor: "transparent",
   },
   swatchSelected: {
     borderColor: Colors.gold,
@@ -528,7 +622,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     backgroundColor: Colors.gold,
-    alignItems: 'center',
+    alignItems: "center",
   },
   createBtnText: {
     fontFamily: FontFamily.bodySemi,
@@ -537,8 +631,8 @@ const styles = StyleSheet.create({
   },
   // Smart binder UI
   smartToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
@@ -568,26 +662,29 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   smartIndicator: {
-    width: 14, height: 14, borderRadius: 7,
-    borderWidth: 1, borderColor: Colors.line,
-    backgroundColor: 'transparent',
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: "transparent",
   },
   smartIndicatorActive: {
     backgroundColor: Colors.gold,
     borderColor: Colors.gold,
   },
   smartBadge: {
-    position: 'absolute',
+    position: "absolute",
     top: 12,
     right: 12,
     width: 26,
     height: 26,
     borderRadius: 13,
     borderWidth: 1,
-    borderColor: 'rgba(255,215,0,0.5)',
-    backgroundColor: 'rgba(10,10,12,0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderColor: "rgba(255,215,0,0.5)",
+    backgroundColor: "rgba(10,10,12,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   rulesScroll: {
     maxHeight: 220,
@@ -601,8 +698,8 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   ruleChipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 6,
     marginBottom: 4,
   },
@@ -615,8 +712,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.glass,
   },
   ruleChipActive: {
-    borderColor: 'rgba(255,215,0,0.45)',
-    backgroundColor: 'rgba(255,215,0,0.10)',
+    borderColor: "rgba(255,215,0,0.45)",
+    backgroundColor: "rgba(255,215,0,0.10)",
   },
   ruleChipText: {
     fontFamily: FontFamily.mono,
@@ -631,7 +728,7 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.body,
     fontSize: 12,
     color: Colors.text3,
-    textAlign: 'center',
+    textAlign: "center",
     paddingVertical: 16,
   },
 });

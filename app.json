@@ -11,7 +11,9 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.devinpadron.vault",
       "usesAppleSignIn": true,
-      "associatedDomains": ["applinks:vault.app"],
+      "associatedDomains": [
+        "applinks:vault.app"
+      ],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -52,7 +54,8 @@
         {
           "color": "#FFD700"
         }
-      ]
+      ],
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true,

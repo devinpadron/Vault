@@ -17,9 +17,9 @@ const VARIANTS   = ['EX', 'V', 'VMAX', 'VSTAR', 'GX', 'V-UNION'] as const;
 interface Props {
   value:                SmartBinderRules | null;
   onChange:             (next: SmartBinderRules) => void;
-  /** Top sets the user owns, ordered most-owned first. */
+  /** All set names (upper-cased), owned ones first. Searchable — can be long. */
   availableSets:        string[];
-  /** Distinct rarities present in the user's collection. */
+  /** All selectable rarities, owned ones first. */
   availableRarities:    string[];
 }
 
@@ -49,11 +49,33 @@ export function SmartRulesEditor({
   const [maxText, setMaxText] = useState<string>(
     rules.maxValue != null ? String(rules.maxValue) : '',
   );
+  // Search boxes for the long set / rarity lists.
+  const [setQuery, setSetQuery] = useState('');
+  const [rarityQuery, setRarityQuery] = useState('');
   useEffect(() => {
     setMinText(rules.minValue != null ? String(rules.minValue) : '');
     setMaxText(rules.maxValue != null ? String(rules.maxValue) : '');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
+
+  // Sets to render: the selected ones (so they can be removed) plus matches for
+  // the current query. Nothing is listed until the user searches — the catalog
+  // is ~170 sets.
+  const selectedSets = useMemo(() => rules.sets ?? [], [rules.sets]);
+  const setMatches = useMemo(() => {
+    const q = setQuery.trim().toUpperCase();
+    if (q === '') return [];
+    const selected = new Set(selectedSets);
+    return availableSets.filter(s => !selected.has(s) && s.includes(q)).slice(0, 60);
+  }, [availableSets, selectedSets, setQuery]);
+
+  const selectedRarities = useMemo(() => rules.rarities ?? [], [rules.rarities]);
+  const rarityMatches = useMemo(() => {
+    const q = rarityQuery.trim().toLowerCase();
+    if (q === '') return [];
+    const selected = new Set(selectedRarities);
+    return availableRarities.filter(r => !selected.has(r) && r.toLowerCase().includes(q)).slice(0, 60);
+  }, [availableRarities, selectedRarities, rarityQuery]);
 
   function patch(next: Partial<SmartBinderRules>) {
     onChange({ ...rules, ...next });
@@ -84,6 +106,7 @@ export function SmartRulesEditor({
     if (rules.rarities?.length)    n += 1;
     if (rules.supertypes?.length)  n += 1;
     if (rules.variants?.length)    n += 1;
+    if (rules.nameMatch?.trim())   n += 1;
     if (rules.minValue != null)    n += 1;
     if (rules.maxValue != null)    n += 1;
     if (rules.foilOnly)            n += 1;
@@ -118,45 +141,89 @@ export function SmartRulesEditor({
           : 'A card needs to satisfy just one of the filters below.'}
       </Text>
 
-      {/* Sets */}
+      {/* Name contains */}
+      <Text style={styles.label}>NAME CONTAINS</Text>
+      <TextInput
+        value={rules.nameMatch ?? ''}
+        onChangeText={t => patch({ nameMatch: t })}
+        placeholder="e.g. Charizard"
+        placeholderTextColor={Colors.text3}
+        autoCapitalize="words"
+        autoCorrect={false}
+        style={styles.nameInput}
+      />
+      <Text style={styles.helpText}>
+        Matches any card whose name contains this text (case-insensitive). Leave
+        blank to ignore.
+      </Text>
+
+      {/* Sets — search only; the full catalog (~170) is too long to list flat */}
       {availableSets.length > 0 && (
         <>
           <Text style={styles.label}>SETS</Text>
-          <View style={styles.chipRow}>
-            {availableSets.map(s => {
-              const on = rules.sets?.includes(s) ?? false;
-              return (
-                <TouchableOpacity
-                  key={s}
-                  onPress={() => patch({ sets: toggleListItem(rules.sets, s) })}
-                  style={[styles.chip, on && styles.chipActive]}
-                >
-                  <Text style={[styles.chipText, on && styles.chipTextActive]}>{s}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+          <TextInput
+            value={setQuery}
+            onChangeText={setSetQuery}
+            placeholder="Search all sets…"
+            placeholderTextColor={Colors.text3}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            style={styles.nameInput}
+          />
+          {(selectedSets.length > 0 || setMatches.length > 0) && (
+            <View style={[styles.chipRow, { marginTop: 8 }]}>
+              {[...selectedSets, ...setMatches].map(s => {
+                const on = rules.sets?.includes(s) ?? false;
+                return (
+                  <TouchableOpacity
+                    key={s}
+                    onPress={() => patch({ sets: toggleListItem(rules.sets, s) })}
+                    style={[styles.chip, on && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, on && styles.chipTextActive]}>{s}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+          {setQuery.trim() !== '' && setMatches.length === 0 && (
+            <Text style={styles.helpText}>No sets match “{setQuery.trim()}”.</Text>
+          )}
         </>
       )}
 
-      {/* Rarities */}
+      {/* Rarity — search only, matching the Sets pattern */}
       {availableRarities.length > 0 && (
         <>
           <Text style={styles.label}>RARITY</Text>
-          <View style={styles.chipRow}>
-            {availableRarities.map(r => {
-              const on = rules.rarities?.includes(r) ?? false;
-              return (
-                <TouchableOpacity
-                  key={r}
-                  onPress={() => patch({ rarities: toggleListItem(rules.rarities, r) })}
-                  style={[styles.chip, on && styles.chipActive]}
-                >
-                  <Text style={[styles.chipText, on && styles.chipTextActive]}>{r}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+          <TextInput
+            value={rarityQuery}
+            onChangeText={setRarityQuery}
+            placeholder="Search rarities…"
+            placeholderTextColor={Colors.text3}
+            autoCapitalize="words"
+            autoCorrect={false}
+            style={styles.nameInput}
+          />
+          {(selectedRarities.length > 0 || rarityMatches.length > 0) && (
+            <View style={[styles.chipRow, { marginTop: 8 }]}>
+              {[...selectedRarities, ...rarityMatches].map(r => {
+                const on = rules.rarities?.includes(r) ?? false;
+                return (
+                  <TouchableOpacity
+                    key={r}
+                    onPress={() => patch({ rarities: toggleListItem(rules.rarities, r) })}
+                    style={[styles.chip, on && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, on && styles.chipTextActive]}>{r}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+          {rarityQuery.trim() !== '' && rarityMatches.length === 0 && (
+            <Text style={styles.helpText}>No rarities match “{rarityQuery.trim()}”.</Text>
+          )}
         </>
       )}
 
@@ -234,6 +301,11 @@ export function SmartRulesEditor({
         </Text>
         <View style={[styles.toggleDot, rules.foilOnly && styles.toggleDotActive]} />
       </TouchableOpacity>
+
+      <Text style={styles.helpText}>
+        Matching cards are filed in automatically and stay put — you can still
+        reorder them or switch this binder to manual any time.
+      </Text>
 
       <Text style={styles.summary}>
         {ruleCount === 0
@@ -338,6 +410,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.text,
   },
+  nameInput: {
+    borderWidth: 1,
+    borderColor: Colors.line,
+    borderRadius: Radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    fontFamily: FontFamily.body,
+    fontSize: 14,
+    color: Colors.text,
+    backgroundColor: Colors.glass,
+  },
   rangeSep: {
     fontFamily: FontFamily.mono,
     fontSize: 14,
@@ -414,6 +497,7 @@ export function rulesHaveAtLeastOneFilter(r: SmartBinderRules | null): boolean {
     (r.rarities?.length ?? 0) > 0 ||
     (r.supertypes?.length ?? 0) > 0 ||
     (r.variants?.length ?? 0) > 0 ||
+    !!r.nameMatch?.trim() ||
     r.minValue != null ||
     r.maxValue != null ||
     !!r.foilOnly

@@ -51,6 +51,8 @@ async function runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
 const MIGRATIONS: ReadonlyArray<(db: SQLite.SQLiteDatabase) => Promise<void>> = [
   migration1BaseSchema,
   migration2DropLegacyTables,
+  migration3BinderMedia,
+  migration4BinderCoverCards,
 ];
 
 // v0 → v1: the full mirror schema as it stood when the runner was introduced,
@@ -191,6 +193,34 @@ async function migration2DropLegacyTables(db: SQLite.SQLiteDatabase): Promise<vo
     DROP TABLE IF EXISTS binder_cards;
     DROP TABLE IF EXISTS wishlist_cards;
   `);
+}
+
+// v2 → v3: mirror of the cloud `binder_media` table — photo tiles + full-page
+// backgrounds decorating a binder's pages. Eager-loaded on sign-in like the
+// other cloud_* mirrors; mutations route through pending_ops.
+async function migration3BinderMedia(db: SQLite.SQLiteDatabase): Promise<void> {
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS cloud_binder_media (
+      id          TEXT PRIMARY KEY,
+      binder_id   TEXT NOT NULL,
+      user_id     TEXT NOT NULL,
+      page_num    INTEGER NOT NULL DEFAULT 0,
+      kind        TEXT NOT NULL DEFAULT 'tile',   -- 'tile' | 'background'
+      cell_mask   INTEGER NOT NULL DEFAULT 0,     -- bits 0..8 = occupied cells (tiles)
+      storage_key TEXT NOT NULL,                  -- public URL into binder-media bucket
+      transform   TEXT,                           -- JSON; null = default fit
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS cloud_binder_media_binder_idx
+      ON cloud_binder_media (binder_id, page_num);
+  `);
+}
+
+// v3 → v4: per-binder chosen cover cards (JSON array of card ids; null =
+// default to the first two by position). Mirror of collections.cover_card_ids.
+async function migration4BinderCoverCards(db: SQLite.SQLiteDatabase): Promise<void> {
+  await addMissingColumns(db, 'cloud_collections', { cover_card_ids: 'TEXT' });
 }
 
 async function addMissingColumns(

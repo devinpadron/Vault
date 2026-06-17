@@ -91,6 +91,31 @@ export function useExpansionNames() {
   });
 }
 
+// All expansion names, UPPER-cased + de-duped, newest first — the full set
+// catalog for the smart-binder rule editor (card.set is stored upper-cased, so
+// rules match against this form). Auto-updates as new sets sync into the
+// expansions table; cached hard since it rarely changes.
+export function useAllSetNames() {
+  return useQuery<string[]>({
+    queryKey: ['all-set-names'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('expansions')
+        .select('name, release_date')
+        .order('release_date', { ascending: false });
+      if (error) throw new Error(error.message);
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const e of (data ?? []) as { name: string }[]) {
+        const up = (e.name || '').toUpperCase();
+        if (up && !seen.has(up)) { seen.add(up); out.push(up); }
+      }
+      return out;
+    },
+    staleTime: 1000 * 60 * 60 * 24,
+  });
+}
+
 interface SearchFilter { col: string; value: string }
 // Each group is a set of OR alternatives (any may match); groups are AND-ed
 // together. `setFilter` is held apart because it targets the joined expansions

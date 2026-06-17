@@ -71,6 +71,42 @@ export const FEATURED_RARITIES = [
   'Illustration Rare',
 ] as const;
 
+// Canonical rarity list for the smart-binder rule editor, so users can pick
+// rarities they don't yet own. Ordered roughly common → chase. Merged with the
+// rarities actually present in a user's collection, so any catalog value not
+// covered here still surfaces.
+export const ALL_RARITIES = [
+  'Common',
+  'Uncommon',
+  'Rare',
+  'Rare Holo',
+  'Double Rare',
+  'Rare Holo EX',
+  'Rare Holo GX',
+  'Rare Holo V',
+  'Rare Holo VMAX',
+  'Rare Holo VSTAR',
+  'Ultra Rare',
+  'Illustration Rare',
+  'Special Illustration Rare',
+  'Hyper Rare',
+  'Amazing Rare',
+  'Radiant Rare',
+  'Shiny Rare',
+  'Shiny Ultra Rare',
+  'ACE SPEC Rare',
+  'Rare BREAK',
+  'Rare Prism Star',
+  'Rare Prime',
+  'Rare ACE',
+  'LEGEND',
+  'Rare Holo Star',
+  'Trainer Gallery Rare Holo',
+  'Rainbow Rare',
+  'Secret Rare',
+  'Promo',
+] as const;
+
 // ---------------------------------------------------------------------------
 // Supabase row shapes (new tiered schema)
 // ---------------------------------------------------------------------------

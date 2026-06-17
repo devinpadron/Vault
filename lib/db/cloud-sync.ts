@@ -32,9 +32,17 @@ export interface SmartBinderRules {
   rarities?:  string[];
   supertypes?:string[];        // 'Pokémon' | 'Trainer' | 'Energy'
   variants?:  string[];        // 'EX' | 'V' | 'VMAX' …
+  nameMatch?: string;          // case-insensitive substring of the card name, e.g. "Charizard"
   minValue?:  number;
   maxValue?:  number;
   foilOnly?:  boolean;
+  // When true the binder is an *auto-filing* binder rather than a live virtual
+  // filter: cards entering the main collection that match these rules are
+  // copied in as real, persistent rows (and a one-time backfill files existing
+  // matches). Persistent membership survives the card later leaving the
+  // collection or the rules changing — unlike the virtual default. Not a filter
+  // condition; ignored by cardMatchesRules / rulesHaveAtLeastOneFilter.
+  autoAdd?:   boolean;
 }
 
 export interface MirrorCollection {
@@ -139,6 +147,31 @@ export interface MirrorSale {
   created_at: number;
 }
 
+export type BinderMediaKind = 'tile' | 'background';
+
+/** Per-image transform for a tile/background (optional fit/pan/zoom). Stored as
+ *  JSON in `transform`; null = default fit. Reserved for a future editor — the
+ *  current renderer reads only `cell_mask` + `kind`. */
+export interface BinderMediaTransform {
+  fitMode?: 'page' | 'bbox';
+  scale?: number;
+  offsetX?: number;
+  offsetY?: number;
+}
+
+export interface MirrorBinderMedia {
+  id: string;
+  binder_id: string;
+  user_id: string;
+  page_num: number;
+  kind: BinderMediaKind;
+  cell_mask: number;          // bits 0..8 = occupied cells (tiles); 0 for backgrounds
+  storage_key: string;        // public URL into the binder-media bucket
+  transform: BinderMediaTransform | null;
+  created_at: number;
+  updated_at: number;
+}
+
 // RFC4122 v4 UUID without pulling in expo-crypto. The harness collision
 // chance for a single device's lifetime is astronomically low.
 export function uuidv4(): string {
@@ -186,6 +219,7 @@ export async function wipeLocalUserData(): Promise<void> {
         DELETE FROM cloud_collection_items;
         DELETE FROM cloud_card_sales;
         DELETE FROM cloud_card_grading;
+        DELETE FROM cloud_binder_media;
         DELETE FROM pending_ops;
       `);
     }),
@@ -253,7 +287,7 @@ async function doPull(userId: string): Promise<void> {
   // 1. Fetch collections + items in two queries.
   const { data: collectionsData, error: cErr } = await supabase
     .from('collections')
-    .select('id, user_id, kind, name, description, tone_start, tone_end, is_public, rules, created_at, updated_at')
+    .select('id, user_id, kind, name, description, tone_start, tone_end, is_public, rules, cover_card_ids, created_at, updated_at')
     .eq('user_id', userId);
   if (cErr) throw new Error(`pull collections: ${cErr.message}`);
 
@@ -323,6 +357,20 @@ async function doPull(userId: string): Promise<void> {
     .eq('user_id', userId);
   if (gErr) throw new Error(`pull grading: ${gErr.message}`);
   const grading: GradingRow[] = (gradingData ?? []) as GradingRow[];
+
+  // Pull binder media (photo tiles + full-page backgrounds).
+  type BinderMediaRow = {
+    id: string; binder_id: string; user_id: string;
+    page_num: number; kind: string; cell_mask: number;
+    storage_key: string; transform: unknown | null;
+    created_at: string; updated_at: string;
+  };
+  const { data: mediaData, error: mErr } = await supabase
+    .from('binder_media')
+    .select('id, binder_id, user_id, page_num, kind, cell_mask, storage_key, transform, created_at, updated_at')
+    .eq('user_id', userId);
+  if (mErr) throw new Error(`pull binder media: ${mErr.message}`);
+  const media: BinderMediaRow[] = (mediaData ?? []) as BinderMediaRow[];
 
   // 2. Hydrate card_json for items. First read the local cache_cards mirror;
   // for ids not in the cache (e.g. a fresh install where the cache is empty)
@@ -406,7 +454,7 @@ async function doPull(userId: string): Promise<void> {
       `SELECT COUNT(*) AS n FROM pending_ops WHERE status != 'failed'`,
     );
     if ((undrained?.n ?? 0) > 0) return;
-    await db.execAsync(`DELETE FROM cloud_collections; DELETE FROM cloud_collection_items; DELETE FROM cloud_card_sales; DELETE FROM cloud_card_grading;`);
+    await db.execAsync(`DELETE FROM cloud_collections; DELETE FROM cloud_collection_items; DELETE FROM cloud_card_sales; DELETE FROM cloud_card_grading; DELETE FROM cloud_binder_media;`);
 
     const collectionRows: SqlValue[][] = (collectionsData ?? []).map(raw => {
       const c = raw as {
@@ -419,6 +467,7 @@ async function doPull(userId: string): Promise<void> {
         tone_end: string | null;
         is_public: boolean;
         rules: SmartBinderRules | null | undefined;
+        cover_card_ids: string[] | null | undefined;
         created_at: string;
         updated_at: string;
       };
@@ -426,6 +475,7 @@ async function doPull(userId: string): Promise<void> {
         c.id, c.user_id, c.kind, c.name, c.description,
         c.tone_start, c.tone_end, c.is_public ? 1 : 0,
         c.rules ? JSON.stringify(c.rules) : null,
+        c.cover_card_ids && c.cover_card_ids.length > 0 ? JSON.stringify(c.cover_card_ids) : null,
         new Date(c.created_at).getTime(),
         new Date(c.updated_at).getTime(),
       ];
@@ -433,8 +483,8 @@ async function doPull(userId: string): Promise<void> {
     await insertRows(
       db,
       `INSERT INTO cloud_collections
-       (id, user_id, kind, name, description, tone_start, tone_end, is_public, rules, created_at, updated_at)`,
-      11,
+       (id, user_id, kind, name, description, tone_start, tone_end, is_public, rules, cover_card_ids, created_at, updated_at)`,
+      12,
       collectionRows,
     );
 
@@ -508,6 +558,22 @@ async function doPull(userId: string): Promise<void> {
         new Date(g.updated_at).getTime(),
       ]),
     );
+
+    await insertRows(
+      db,
+      `INSERT INTO cloud_binder_media
+       (id, binder_id, user_id, page_num, kind, cell_mask, storage_key, transform, created_at, updated_at)`,
+      10,
+      media.map(m => [
+        m.id, m.binder_id, m.user_id, m.page_num,
+        m.kind === 'background' ? 'background' : 'tile',
+        m.cell_mask ?? 0,
+        m.storage_key,
+        m.transform != null ? JSON.stringify(m.transform) : null,
+        new Date(m.created_at).getTime(),
+        new Date(m.updated_at).getTime(),
+      ]),
+    );
   });
 }
 
@@ -546,7 +612,12 @@ export type PendingOp =
   | { op_type: 'set_collection_visibility'; payload: { id: string; is_public: boolean } }
   | { op_type: 'upsert_grading';    payload: GradingUpsertPayload }
   | { op_type: 'delete_grading';    payload: { id: string } }
-  | { op_type: 'set_collection_rules'; payload: { id: string; rules: SmartBinderRules | null } };
+  | { op_type: 'set_collection_rules'; payload: { id: string; rules: SmartBinderRules | null } }
+  | { op_type: 'set_collection_cover'; payload: { id: string; cover_card_ids: string[] | null } }
+  | { op_type: 'reorder_item';      payload: { id: string; position: number } }
+  | { op_type: 'add_binder_media';    payload: { id: string; binder_id: string; page_num: number; kind: BinderMediaKind; cell_mask: number; storage_key: string; transform: unknown | null } }
+  | { op_type: 'update_binder_media'; payload: { id: string; page_num?: number; cell_mask?: number; transform?: unknown | null } }
+  | { op_type: 'remove_binder_media'; payload: { id: string } };
 
 export interface GradingUpsertPayload {
   id: string;
@@ -642,6 +713,18 @@ export async function setCollectionRules(id: string, rules: SmartBinderRules | n
     [rules ? JSON.stringify(rules) : null, Date.now(), id],
   );
   await enqueue({ op_type: 'set_collection_rules', payload: { id, rules } });
+}
+
+/** Choose the binder's cover cards (up to two card ids), or pass `null` to fall
+ *  back to the first two cards by position. */
+export async function setCollectionCover(id: string, coverCardIds: string[] | null): Promise<void> {
+  const db = await getDb();
+  const value = coverCardIds && coverCardIds.length > 0 ? coverCardIds.slice(0, 2) : null;
+  await db.runAsync(
+    `UPDATE cloud_collections SET cover_card_ids = ?, updated_at = ? WHERE id = ?`,
+    [value ? JSON.stringify(value) : null, Date.now(), id],
+  );
+  await enqueue({ op_type: 'set_collection_cover', payload: { id, cover_card_ids: value } });
 }
 
 export async function deleteCollection(id: string): Promise<void> {
@@ -1015,6 +1098,132 @@ export async function recordSaleAndRemoveById(
   await enqueue({ op_type: 'remove_item', payload: { id: itemId } });
 }
 
+// ─── Reorder ─────────────────────────────────────────────────────────────────
+
+/**
+ * Persist a new card ordering for a binder. `orderedItemIds` is the full list of
+ * the binder's item ids in their desired order; rows are renumbered 0..n-1 in
+ * the mirror and a `reorder_item` op is enqueued for each row that actually
+ * moved. Idempotent — re-applying the same order is a no-op.
+ */
+export async function reorderBinder(binderId: string, orderedItemIds: string[]): Promise<void> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ id: string; position: number }>(
+    `SELECT id, position FROM cloud_collection_items WHERE collection_id = ?`,
+    [binderId],
+  );
+  const currentPos = new Map(rows.map(r => [r.id, r.position]));
+  const changed: { id: string; position: number }[] = [];
+  await db.withTransactionAsync(async () => {
+    for (let i = 0; i < orderedItemIds.length; i++) {
+      const id = orderedItemIds[i];
+      if (currentPos.get(id) === i) continue;
+      await db.runAsync(`UPDATE cloud_collection_items SET position = ? WHERE id = ?`, [i, id]);
+      changed.push({ id, position: i });
+    }
+  });
+  for (const c of changed) {
+    await enqueue({ op_type: 'reorder_item', payload: { id: c.id, position: c.position } });
+  }
+}
+
+/**
+ * Set explicit slot positions for specific binder items (slot = page·9 + cell),
+ * leaving every other item untouched. Unlike reorderBinder this preserves gaps —
+ * cards can sit in non-contiguous cells. Used by free-placement drag-and-drop
+ * (move into an empty cell, or swap two cards' slots).
+ */
+export async function setBinderItemPositions(
+  updates: { itemId: string; position: number }[],
+): Promise<void> {
+  if (updates.length === 0) return;
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    for (const u of updates) {
+      await db.runAsync(
+        `UPDATE cloud_collection_items SET position = ? WHERE id = ?`,
+        [u.position, u.itemId],
+      );
+    }
+  });
+  for (const u of updates) {
+    await enqueue({ op_type: 'reorder_item', payload: { id: u.itemId, position: u.position } });
+  }
+}
+
+// ─── Binder media (tiles / backgrounds) ──────────────────────────────────────
+
+export interface AddBinderMediaInput {
+  userId: string;
+  binderId: string;
+  pageNum: number;
+  kind: BinderMediaKind;
+  cellMask: number;          // ignored for backgrounds
+  storageKey: string;        // public URL into the binder-media bucket
+  transform?: BinderMediaTransform | null;
+}
+
+export async function addBinderMedia(input: AddBinderMediaInput): Promise<MirrorBinderMedia> {
+  const db = await getDb();
+  const id = uuidv4();
+  const now = Date.now();
+  const transform = input.transform ?? null;
+  const cellMask = input.kind === 'background' ? 0 : input.cellMask;
+  await db.runAsync(
+    `INSERT INTO cloud_binder_media
+       (id, binder_id, user_id, page_num, kind, cell_mask, storage_key, transform, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, input.binderId, input.userId, input.pageNum, input.kind, cellMask, input.storageKey,
+     transform ? JSON.stringify(transform) : null, now, now],
+  );
+  await enqueue({
+    op_type: 'add_binder_media',
+    payload: {
+      id, binder_id: input.binderId, page_num: input.pageNum, kind: input.kind,
+      cell_mask: cellMask, storage_key: input.storageKey, transform,
+    },
+  });
+  return {
+    id, binder_id: input.binderId, user_id: input.userId, page_num: input.pageNum,
+    kind: input.kind, cell_mask: cellMask, storage_key: input.storageKey,
+    transform, created_at: now, updated_at: now,
+  };
+}
+
+export async function updateBinderMedia(
+  id: string,
+  patch: { pageNum?: number; cellMask?: number; transform?: BinderMediaTransform | null },
+): Promise<void> {
+  const db = await getDb();
+  const sets: string[] = [];
+  const args: SqlValue[] = [];
+  if (patch.pageNum !== undefined)  { sets.push('page_num = ?');  args.push(patch.pageNum); }
+  if (patch.cellMask !== undefined) { sets.push('cell_mask = ?'); args.push(patch.cellMask); }
+  if (patch.transform !== undefined) {
+    sets.push('transform = ?');
+    args.push(patch.transform ? JSON.stringify(patch.transform) : null);
+  }
+  if (sets.length === 0) return;
+  sets.push('updated_at = ?'); args.push(Date.now());
+  args.push(id);
+  await db.runAsync(`UPDATE cloud_binder_media SET ${sets.join(', ')} WHERE id = ?`, args);
+  await enqueue({
+    op_type: 'update_binder_media',
+    payload: {
+      id,
+      ...(patch.pageNum  !== undefined ? { page_num: patch.pageNum } : {}),
+      ...(patch.cellMask !== undefined ? { cell_mask: patch.cellMask } : {}),
+      ...(patch.transform !== undefined ? { transform: patch.transform } : {}),
+    },
+  });
+}
+
+export async function removeBinderMedia(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM cloud_binder_media WHERE id = ?`, [id]);
+  await enqueue({ op_type: 'remove_binder_media', payload: { id } });
+}
+
 // ─── Flusher ─────────────────────────────────────────────────────────────────
 
 const MAX_ATTEMPTS = 6;
@@ -1273,6 +1482,55 @@ async function applyOpToCloud(opType: string, payload: Record<string, unknown>):
         sale_price:    p.sale_price,
         sold_at:       p.sold_at,
       }, { onConflict: 'id' });
+      if (error) throw new Error(error.message);
+      return;
+    }
+    case 'set_collection_cover': {
+      const p = payload as { id: string; cover_card_ids: string[] | null };
+      const { error } = await supabase
+        .from('collections')
+        .update({ cover_card_ids: p.cover_card_ids })
+        .eq('id', p.id);
+      if (error) throw new Error(error.message);
+      return;
+    }
+    case 'reorder_item': {
+      const p = payload as { id: string; position: number };
+      const { error } = await supabase
+        .from('collection_items')
+        .update({ position: p.position })
+        .eq('id', p.id);
+      if (error) throw new Error(error.message);
+      return;
+    }
+    case 'add_binder_media': {
+      const p = payload as { id: string; binder_id: string; page_num: number; kind: BinderMediaKind; cell_mask: number; storage_key: string; transform: unknown | null };
+      const { error } = await supabase.from('binder_media').upsert({
+        id:          p.id,
+        binder_id:   p.binder_id,
+        user_id:     user.id,
+        page_num:    p.page_num,
+        kind:        p.kind,
+        cell_mask:   p.cell_mask,
+        storage_key: p.storage_key,
+        transform:   p.transform ?? null,
+      }, { onConflict: 'id' });
+      if (error) throw new Error(error.message);
+      return;
+    }
+    case 'update_binder_media': {
+      const p = payload as { id: string; page_num?: number; cell_mask?: number; transform?: unknown | null };
+      const patch: Record<string, unknown> = {};
+      if (p.page_num !== undefined)  patch.page_num = p.page_num;
+      if (p.cell_mask !== undefined) patch.cell_mask = p.cell_mask;
+      if (p.transform !== undefined) patch.transform = p.transform;
+      const { error } = await supabase.from('binder_media').update(patch).eq('id', p.id);
+      if (error) throw new Error(error.message);
+      return;
+    }
+    case 'remove_binder_media': {
+      const p = payload as { id: string };
+      const { error } = await supabase.from('binder_media').delete().eq('id', p.id);
       if (error) throw new Error(error.message);
       return;
     }

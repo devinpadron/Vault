@@ -109,7 +109,8 @@ export interface Binder {
   name: string;
   subtitle: string;
   count: number;
-  cover: Card;
+  cover: Card;            // primary cover (covers[0]); kept for back-compat
+  covers: Card[];         // up to two cards shown on the binder cover
   tone: [string, string];
   /** When present, the binder auto-materializes from the owner's collection
    *  using these rules. Manual adds are ignored on smart binders. */

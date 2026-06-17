@@ -133,6 +133,7 @@ function rowToBinder(r: FriendCollectionRow): Binder {
     subtitle: r.description ?? '',
     count:    r.collection_items[0]?.count ?? 0,
     cover:    PLACEHOLDER_CARD,
+    covers:   [],
     tone,
   };
 }
@@ -230,6 +231,7 @@ export function useFriendBinder(binderId: string) {
         subtitle: row.description ?? '',
         count:    row.collection_items[0]?.count ?? 0,
         cover:    PLACEHOLDER_CARD,
+        covers:   [],
         tone,
       };
     },

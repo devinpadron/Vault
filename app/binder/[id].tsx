@@ -1,8 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
-  Dimensions,
-  FlatList,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -16,20 +14,30 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import * as Linking from 'expo-linking';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { CardThumb } from '@/components/cards/CardThumb';
 import { Icon } from '@/components/ui/Icon';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
+import { BinderBoard } from '@/components/binders/BinderBoard';
+import { TileEditorSheet } from '@/components/binders/TileEditorSheet';
+import { CoverPickerSheet } from '@/components/binders/CoverPickerSheet';
+import { binderPageCount } from '@/lib/binder/reorder-model';
 import {
+  BinderItem,
   useBinder,
   useBinderCards,
+  useBinderItems,
+  useBinderMedia,
   useDeleteBinder,
+  useReconcileBinderTiles,
   useRemoveCardFromBinder,
   useRenameBinder,
+  useSetBinderCover,
+  useSetBinderItemPositions,
   useUpdateBinderRules,
 } from '@/lib/api/binders';
 import { useFriendBinder, useFriendBinderCards } from '@/lib/api/friends';
+import { useAllSetNames } from '@/lib/api/cards';
+import { ALL_RARITIES } from '@/lib/api/types';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useBinderVisibility, useSetCollectionVisibility, useCollectionEntries } from '@/lib/db/collection';
 import { SmartBinderRules } from '@/lib/db/cloud-sync';
@@ -41,33 +49,6 @@ import {
 } from '@/components/binders/SmartRulesEditor';
 import { Colors, FontFamily, NavButtonStyle, Radius, Spacing } from '@/constants/theme';
 import { Card } from '@/types';
-
-const CONTAINER_MARGIN = 18;
-const CONTAINER_PADDING = 14;
-const COL_GAP = 10;
-const SLEEVE_PADDING = 4;
-const NUM_COLS = 3;
-const PAGE_SIZE = 9;            // 3 × 3 grid per page
-
-function getThumbWidth(screenWidth: number) {
-  const inner = screenWidth - CONTAINER_MARGIN * 2 - CONTAINER_PADDING * 2;
-  const sleeveWidth = (inner - COL_GAP * (NUM_COLS - 1)) / NUM_COLS;
-  return Math.floor(sleeveWidth - SLEEVE_PADDING * 2);
-}
-
-// Split a card list into 9-card pages, padding the last page with nulls so
-// every page renders an identically-sized 3×3 grid. An empty binder still
-// gets one page so the user sees the empty sleeves.
-function paginate(cards: Card[]): (Card | null)[][] {
-  if (cards.length === 0) return [Array.from({ length: PAGE_SIZE }, () => null)];
-  const pages: (Card | null)[][] = [];
-  for (let i = 0; i < cards.length; i += PAGE_SIZE) {
-    const slice = cards.slice(i, i + PAGE_SIZE) as (Card | null)[];
-    while (slice.length < PAGE_SIZE) slice.push(null);
-    pages.push(slice);
-  }
-  return pages;
-}
 
 export default function BinderOpenScreen() {
   const { id, ownerId } = useLocalSearchParams<{ id: string; ownerId?: string }>();
@@ -91,18 +72,36 @@ export default function BinderOpenScreen() {
   const refetch     = isOwn ? ownQuery.refetch : friendQuery.refetch;
   const binderCards = (isOwn ? ownCardsQuery.data : friendCardsQuery.data) ?? [];
 
+  // Owned binders carry real item rows (needed for drag-reorder) + media; friend
+  // binders are read-only cards with no local mirror.
+  const ownItemsQuery = useBinderItems(isOwn ? (id ?? '') : '');
+  const { data: media = [] } = useBinderMedia(isOwn ? (id ?? '') : '');
+
   const [menuOpen, setMenuOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const [activePage, setActivePage] = useState(0);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [beautifyOpen, setBeautifyOpen] = useState(false);
+  const [coverOpen, setCoverOpen] = useState(false);
   const [draftRules, setDraftRules] = useState<SmartBinderRules | null>(null);
 
-  // Options for the rules editor are derived from the user's main collection.
+  // Rule-editor options: owned sets/rarities first (familiar), then the rest of
+  // the catalog so users can target sets/rarities they don't own yet.
   const { data: entries = [] } = useCollectionEntries();
+  const { data: allSets = [] } = useAllSetNames();
   const ruleOptions = useMemo(
     () => deriveRuleOptions(entries.map(e => ({ set: e.card.set, rarity: e.card.rarity }))),
     [entries],
+  );
+  const availableSets = useMemo(
+    () => Array.from(new Set([...ruleOptions.sets, ...allSets])),
+    [ruleOptions.sets, allSets],
+  );
+  const availableRarities = useMemo(
+    () => Array.from(new Set([...ruleOptions.rarities, ...ALL_RARITIES])),
+    [ruleOptions.rarities],
   );
 
   // Mutations only fire for owned binders. They're safe to instantiate
@@ -110,6 +109,22 @@ export default function BinderOpenScreen() {
   const removeCard = useRemoveCardFromBinder();
   const renameBinder = useRenameBinder();
   const deleteBinder = useDeleteBinder();
+  const setPositions = useSetBinderItemPositions();
+  const setCover = useSetBinderCover();
+  const reconcileTiles = useReconcileBinderTiles();
+
+  // Recover any cards hidden behind a tile (legacy collisions): move them to
+  // free slots once per binder open. No-op when there are no collisions.
+  const reconciledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isOwn || !id) return;
+    if ((ownItemsQuery.data?.length ?? 0) === 0) return;
+    if (!media.some(md => md.kind !== 'background')) return;
+    if (reconciledRef.current === id) return;
+    reconciledRef.current = id;
+    reconcileTiles(id).catch(() => { reconciledRef.current = null; });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOwn, id, ownItemsQuery.data, media]);
   const { data: isPublic = false } = useBinderVisibility((id ?? '') as string);
   const setVisibility = useSetCollectionVisibility();
   const updateRules = useUpdateBinderRules();
@@ -155,13 +170,26 @@ export default function BinderOpenScreen() {
   // handler functions defined below, even after the early-return null check.
   const b = binder;
   const isSmart = !!b.rules;
+  // Auto-add binders have rules but own real, editable rows — so unlike a
+  // virtual smart binder, the user can still add/remove cards by hand.
+  const isAuto = !!b.rules?.autoAdd;
+  // A smart binder is a live virtual filter only when it owns no real rows. Once
+  // it has cards (auto-filled, or kept after turning auto off) it's a real,
+  // editable binder — turning auto off no longer strips editing/cover/layout.
+  const hasRealRows = (ownItemsQuery.data?.length ?? 0) > 0;
+  const isVirtual = isSmart && !isAuto && !hasRealRows;
+  // Only owned, real-row binders can be rearranged/decorated.
+  const canEdit = isOwn && !isVirtual;
 
-  const { width: screenWidth } = Dimensions.get('window');
-  const thumbWidth = getThumbWidth(screenWidth);
-  const pages = paginate(binderCards);
-  const pageCount = pages.length;
-  // Page width matches the binder card width so paging snaps to each page.
-  const pageWidth = screenWidth;
+  // Drag-reorder needs the item ids; for virtual/friend binders we synthesize a
+  // read-only list keyed on card id (no reordering exposed).
+  const items: BinderItem[] = canEdit
+    ? (ownItemsQuery.data ?? [])
+    : binderCards.map((c, i) => ({ itemId: c.id, card: c, position: i }));
+
+  const maxCardSlot = items.reduce((mx, it) => Math.max(mx, it.position), -1);
+  const maxMediaPage = media.reduce((mx, md) => Math.max(mx, md.pageNum), 0);
+  const pageCount = binderPageCount(maxCardSlot, maxMediaPage);
 
   function handleShare() {
     // Include the owner so a friend's deep link round-trips to the friend
@@ -208,11 +236,29 @@ export default function BinderOpenScreen() {
       return;
     }
     try {
-      await updateRules(b.id, draftRules);
+      // Smart binders always auto-add — there's no virtual/off mode anymore.
+      await updateRules(b.id, { ...draftRules, autoAdd: true });
       setRulesOpen(false);
     } catch (e) {
       Alert.alert('Save failed', (e as Error).message);
     }
+  }
+
+  function switchToManual() {
+    Alert.alert(
+      'Switch to manual?',
+      'This binder keeps the cards it already has but stops auto-adding and drops its filters. You arrange it by hand from then on.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Switch to manual',
+          onPress: async () => {
+            try { await updateRules(b.id, null); setRulesOpen(false); }
+            catch (e) { Alert.alert('Failed', (e as Error).message); }
+          },
+        },
+      ],
+    );
   }
 
   async function commitRename() {
@@ -312,89 +358,25 @@ export default function BinderOpenScreen() {
         <Text style={styles.title}>{binder.name}</Text>
       </View>
 
-      {/* Horizontal pager — each page is a 3×3 grid inside the gradient sleeve */}
-      <FlatList
-        data={pages}
-        keyExtractor={(_, i) => `page-${i}`}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={e => {
-          const i = Math.round(e.nativeEvent.contentOffset.x / pageWidth);
-          setActivePage(Math.max(0, Math.min(pageCount - 1, i)));
-        }}
-        getItemLayout={(_, i) => ({ length: pageWidth, offset: pageWidth * i, index: i })}
-        renderItem={({ item: page }) => (
-          <View style={{ width: pageWidth }}>
-            <View style={[styles.sleeveContainer, { marginHorizontal: CONTAINER_MARGIN, marginBottom: 0 }]}>
-              <LinearGradient
-                colors={binder.tone}
-                start={{ x: 0.15, y: 0 }}
-                end={{ x: 0.85, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-              {binderCards.length === 0 ? (
-                <View style={styles.emptyGrid}>
-                  <Text style={styles.emptyTitle}>No cards yet</Text>
-                  <Text style={styles.emptySubtitle}>Tap + to add cards</Text>
-                </View>
-              ) : (
-                <View style={styles.grid}>
-                  {[0, 1, 2].map(rowIdx => (
-                    <View
-                      key={rowIdx}
-                      style={[styles.gridRow, rowIdx < 2 && { marginBottom: COL_GAP }]}
-                    >
-                      {page.slice(rowIdx * NUM_COLS, rowIdx * NUM_COLS + NUM_COLS).map((card, colIdx) => (
-                        <View key={colIdx} style={[styles.sleeve, { width: thumbWidth + SLEEVE_PADDING * 2 }]}>
-                          {card ? (
-                            <TouchableOpacity
-                              onPress={() => router.push(`/card/${card.id}`)}
-                              onLongPress={isOwn && !isSmart ? () => confirmRemoveCard(card) : undefined}
-                              activeOpacity={0.85}
-                              accessibilityRole="button"
-                              accessibilityLabel={
-                                isOwn && !isSmart ? `${card.name}. Long-press to remove.` : card.name
-                              }
-                            >
-                              <CardThumb card={card} width={thumbWidth} />
-                            </TouchableOpacity>
-                          ) : (
-                            <View style={{
-                              width: thumbWidth,
-                              height: Math.floor(thumbWidth * 1.4),
-                              backgroundColor: 'rgba(0,0,0,0.25)',
-                              borderRadius: 4,
-                            }} />
-                          )}
-                          <LinearGradient
-                            colors={[
-                              'rgba(255,255,255,0.18)',
-                              'transparent',
-                              'transparent',
-                              'rgba(255,255,255,0.08)',
-                            ]}
-                            locations={[0, 0.3, 0.7, 1]}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
-                            style={[StyleSheet.absoluteFill, { borderRadius: Radius.sm }]}
-                            pointerEvents="none"
-                          />
-                        </View>
-                      ))}
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
-          </View>
-        )}
+      {/* Interactive board: paged 3×3 grid + tiles/backgrounds + drag-reorder */}
+      <BinderBoard
+        items={items}
+        media={media}
+        tone={binder.tone}
+        editing={editing && canEdit}
+        activePage={activePage}
+        onPageChange={p => setActivePage(Math.max(0, Math.min(pageCount - 1, p)))}
+        onPressCard={card => router.push(`/card/${card.id}`)}
+        onRemoveCard={confirmRemoveCard}
+        onSetPositions={updates =>
+          setPositions(b.id, updates).catch(e => Alert.alert('Move failed', (e as Error).message))
+        }
       />
 
       {/* Pagination dots — only meaningful with >1 page */}
       {pageCount > 1 && (
         <View style={styles.dotsRow}>
-          {pages.map((_, i) => (
+          {Array.from({ length: pageCount }).map((_, i) => (
             <View key={i} style={[styles.dot, i === activePage && styles.dotActive]} />
           ))}
         </View>
@@ -402,14 +384,36 @@ export default function BinderOpenScreen() {
 
       {/* Bottom CTAs */}
       <View style={[styles.ctaRow, { paddingBottom: insets.bottom + 16 }]}>
-        <TouchableOpacity style={styles.ctaPrimary} onPress={handleShare} accessibilityLabel="Share binder">
-          <Icon name="share" size={15} color="#0A0A0C" />
-          <Text style={styles.ctaPrimaryText}>Share</Text>
-        </TouchableOpacity>
-        {isOwn && !isSmart && (
-          <TouchableOpacity style={styles.ctaIcon} onPress={handleAdd} accessibilityLabel="Add cards">
-            <Icon name="plus" size={16} color={Colors.text} />
-          </TouchableOpacity>
+        {editing ? (
+          <>
+            <TouchableOpacity
+              style={styles.ctaPrimary}
+              onPress={() => setEditing(false)}
+              accessibilityLabel="Done editing"
+            >
+              <Icon name="check" size={15} color="#0A0A0C" />
+              <Text style={styles.ctaPrimaryText}>Done</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.ctaIcon}
+              onPress={() => setBeautifyOpen(true)}
+              accessibilityLabel="Add photo"
+            >
+              <Icon name="camera" size={16} color={Colors.text} />
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <TouchableOpacity style={styles.ctaPrimary} onPress={handleShare} accessibilityLabel="Share binder">
+              <Icon name="share" size={15} color="#0A0A0C" />
+              <Text style={styles.ctaPrimaryText}>Share</Text>
+            </TouchableOpacity>
+            {canEdit && (
+              <TouchableOpacity style={styles.ctaIcon} onPress={handleAdd} accessibilityLabel="Add cards">
+                <Icon name="plus" size={16} color={Colors.text} />
+              </TouchableOpacity>
+            )}
+          </>
         )}
       </View>
 
@@ -436,38 +440,32 @@ export default function BinderOpenScreen() {
             <Text style={styles.menuLabel}>Rename binder</Text>
           </TouchableOpacity>
 
+          {canEdit && (
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => { setMenuOpen(false); setEditing(true); }}
+            >
+              <Icon name="grid" size={18} color={Colors.text} />
+              <Text style={styles.menuLabel}>Edit layout</Text>
+            </TouchableOpacity>
+          )}
+
+          {canEdit && (
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => { setMenuOpen(false); setCoverOpen(true); }}
+            >
+              <Icon name="star" size={18} color={Colors.text} />
+              <Text style={styles.menuLabel}>Choose cover</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity style={styles.menuRow} onPress={openRulesEditor}>
             <Icon name="flash" size={18} color={Colors.gold} />
             <Text style={[styles.menuLabel, { color: Colors.gold }]}>
               {isSmart ? 'Edit rules' : 'Make this smart'}
             </Text>
           </TouchableOpacity>
-
-          {isSmart && (
-            <TouchableOpacity
-              style={styles.menuRow}
-              onPress={() => {
-                setMenuOpen(false);
-                Alert.alert(
-                  'Convert to manual binder?',
-                  'This binder will keep its name and tone but stop auto-filling. It will become empty — you can add cards by hand from then on.',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                      text: 'Convert',
-                      onPress: async () => {
-                        try { await updateRules(b.id, null); }
-                        catch (e) { Alert.alert('Convert failed', (e as Error).message); }
-                      },
-                    },
-                  ],
-                );
-              }}
-            >
-              <Icon name="edit" size={18} color={Colors.text} />
-              <Text style={styles.menuLabel}>Convert to manual</Text>
-            </TouchableOpacity>
-          )}
 
           <TouchableOpacity style={[styles.menuRow, styles.menuRowDanger]} onPress={confirmDelete}>
             <Icon name="trash" size={18} color={Colors.down} />
@@ -547,12 +545,17 @@ export default function BinderOpenScreen() {
                 <SmartRulesEditor
                   value={draftRules}
                   onChange={setDraftRules}
-                  availableSets={ruleOptions.sets}
-                  availableRarities={ruleOptions.rarities}
+                  availableSets={availableSets}
+                  availableRarities={availableRarities}
                 />
               )}
             </ScrollView>
             <View style={[styles.rulesSheetFooter, { paddingHorizontal: Spacing.xl }]}>
+              {isSmart && (
+                <TouchableOpacity style={styles.switchManualBtn} onPress={switchToManual}>
+                  <Text style={styles.switchManualText}>Switch to manual binder</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity style={styles.saveBtn} onPress={commitRules}>
                 <Text style={styles.saveBtnText}>Save rules</Text>
               </TouchableOpacity>
@@ -560,6 +563,25 @@ export default function BinderOpenScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Beautify — upload + place photo tiles / backgrounds on the current page */}
+      <TileEditorSheet
+        visible={beautifyOpen}
+        onClose={() => setBeautifyOpen(false)}
+        binderId={b.id}
+        pageNum={activePage}
+      />
+
+      {/* Cover picker — choose which (up to two) cards show on the binder cover */}
+      <CoverPickerSheet
+        visible={coverOpen}
+        onClose={() => setCoverOpen(false)}
+        cards={items.map(i => i.card)}
+        initial={b.covers.map(c => c.id)}
+        onSave={ids =>
+          setCover(b.id, ids).catch(e => Alert.alert('Save failed', (e as Error).message))
+        }
+      />
     </View>
   );
 }
@@ -591,40 +613,6 @@ const styles = StyleSheet.create({
     fontSize: 32,
     color: Colors.text,
     lineHeight: 34,
-  },
-  sleeveContainer: {
-    borderRadius: Radius.lg,
-    overflow: 'hidden',
-    padding: CONTAINER_PADDING,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.5,
-    shadowRadius: 24,
-    elevation: 12,
-  },
-  emptyGrid: { alignItems: 'center', paddingVertical: 40 },
-  emptyTitle: {
-    fontFamily: FontFamily.display,
-    fontSize: 18,
-    color: 'rgba(255,255,255,0.6)',
-    marginBottom: 6,
-  },
-  emptySubtitle: {
-    fontFamily: FontFamily.body,
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.4)',
-  },
-  grid: { flexDirection: 'column' },
-  gridRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  sleeve: {
-    padding: SLEEVE_PADDING,
-    borderRadius: Radius.sm,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
   },
   dotsRow: {
     flexDirection: 'row',
@@ -748,6 +736,20 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.bodySemi,
     fontSize: 14,
     color: Colors.bg,
+  },
+  switchManualBtn: {
+    paddingVertical: 13,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    alignItems: 'center',
+    marginBottom: 10,
+    backgroundColor: Colors.glass,
+  },
+  switchManualText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 14,
+    color: Colors.text,
   },
   // Smart-rules editor sheet — full height so the scroll list breathes.
   rulesSheet: {

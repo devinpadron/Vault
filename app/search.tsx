@@ -1,5 +1,5 @@
-import { memo, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View, ScrollView } from 'react-native';
+import { memo, useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -8,6 +8,8 @@ import { SkeletonCard } from '@/components/ui/SkeletonCard';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { Icon } from '@/components/ui/Icon';
 import { useSearchCards, useSearchCount, useExpansionNames, SortField, SortDir } from '@/lib/api/cards';
+import { useAddToCollection } from '@/lib/db/collection';
+import { useBinders, useAddCardToBinder } from '@/lib/api/binders';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useDebouncedValue } from '@/lib/hooks/useDebouncedValue';
 import { fmt } from '@/lib/format';
@@ -28,7 +30,7 @@ const SORT_OPTIONS: { field: SortField; dir: SortDir; label: string; icon: 'arro
   { field: 'number',  dir: 'desc', label: 'Card #: Descending',icon: 'arrow-down' },
 ];
 
-const ResultCell = memo(function ResultCell({ card, index, width }: { card: Card; index: number; width: number }) {
+const ResultCell = memo(function ResultCell({ card, index, width, onQuickAdd }: { card: Card; index: number; width: number; onQuickAdd: (card: Card) => void }) {
   return (
     <Animated.View entering={FadeInDown.delay(Math.min(index % 24, 12) * 25).duration(260)}>
       <TouchableOpacity
@@ -36,7 +38,17 @@ const ResultCell = memo(function ResultCell({ card, index, width }: { card: Card
         activeOpacity={PressOpacity}
         onPress={() => router.push(`/card/${card.id}`)}
       >
-        <CardThumb card={card} width={width} />
+        <View>
+          <CardThumb card={card} width={width} />
+          <TouchableOpacity
+            style={styles.quickAddBtn}
+            onPress={() => onQuickAdd(card)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel={`Quick add ${card.name}`}
+          >
+            <Icon name="plus" size={14} color={Colors.gold} />
+          </TouchableOpacity>
+        </View>
         <Text style={styles.gridName} numberOfLines={1}>{card.name}</Text>
         <Text style={styles.gridSet} numberOfLines={1}>{card.set}</Text>
         <View style={styles.gridPriceRow}>
@@ -61,6 +73,48 @@ export default function SearchScreen() {
   const [sortOpen, setSortOpen] = useState(false);
   const insets = useSafeAreaInsets();
   const { width: screenW } = useWindowDimensions();
+
+  // Quick-add: file a search result straight into the collection or a binder
+  // without opening the card page. `quickAddCard` drives a bottom sheet; the
+  // *Added sets track what's been filed this session so the rows show feedback.
+  const [quickAddCard, setQuickAddCard] = useState<Card | null>(null);
+  const [collAdded, setCollAdded] = useState(false);
+  const [binderAdded, setBinderAdded] = useState<Set<string>>(new Set());
+
+  const addToCollection = useAddToCollection();
+  const { data: binders = [] } = useBinders();
+  const addCardToBinder = useAddCardToBinder();
+  // Virtual smart binders mirror the collection, so they can't take manual adds.
+  const quickBinders = useMemo(() => binders.filter(b => !b.rules || b.rules.autoAdd), [binders]);
+
+  const openQuickAdd = useCallback((card: Card) => {
+    Haptics.selectionAsync();
+    setQuickAddCard(card);
+    setCollAdded(false);
+    setBinderAdded(new Set());
+  }, []);
+  const closeQuickAdd = useCallback(() => setQuickAddCard(null), []);
+
+  async function quickAddToCollection() {
+    if (!quickAddCard) return;
+    try {
+      await addToCollection(quickAddCard);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setCollAdded(true);
+    } catch (e) {
+      Alert.alert('Could not add', (e as Error).message);
+    }
+  }
+  async function quickAddToBinder(binderId: string) {
+    if (!quickAddCard) return;
+    try {
+      await addCardToBinder(binderId, quickAddCard);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setBinderAdded(prev => new Set(prev).add(binderId));
+    } catch (e) {
+      Alert.alert('Could not add', (e as Error).message);
+    }
+  }
 
   // Three columns that fill the row: split the content width (screen minus the
   // horizontal screen padding) evenly, accounting for the inter-column gaps.
@@ -172,7 +226,7 @@ export default function SearchScreen() {
         onEndReached={() => {
           if (hasNextPage && !isFetchingNextPage) fetchNextPage();
         }}
-        renderItem={({ item, index }) => <ResultCell card={item} index={index} width={cellWidth} />}
+        renderItem={({ item, index }) => <ResultCell card={item} index={index} width={cellWidth} onQuickAdd={openQuickAdd} />}
         ListHeaderComponent={
           <>
             {isError && <ErrorPanel error={error} onRetry={refetch} />}
@@ -259,6 +313,52 @@ export default function SearchScreen() {
               </TouchableOpacity>
             );
           })}
+        </View>
+      </Modal>
+
+      {/* Quick-add sheet — file a result into the collection or a binder */}
+      <Modal visible={!!quickAddCard} transparent animationType="slide" onRequestClose={closeQuickAdd}>
+        <Pressable style={styles.overlay} onPress={closeQuickAdd} />
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <View style={styles.sheetHandle} />
+          <Text style={styles.sheetTitle}>Quick add</Text>
+          {quickAddCard && (
+            <Text style={styles.quickCardName} numberOfLines={1}>
+              {quickAddCard.name}
+            </Text>
+          )}
+
+          <ScrollView style={styles.quickList} keyboardShouldPersistTaps="handled">
+            <TouchableOpacity
+              style={[styles.quickRow, collAdded && styles.quickRowDone]}
+              onPress={quickAddToCollection}
+              disabled={collAdded}
+            >
+              <View style={[styles.quickSwatch, { backgroundColor: Colors.goldFaint }]}>
+                <Icon name={collAdded ? 'check' : 'plus'} size={14} color={Colors.gold} />
+              </View>
+              <Text style={styles.quickRowText}>
+                {collAdded ? 'Added to collection' : 'Add to collection'}
+              </Text>
+            </TouchableOpacity>
+
+            {quickBinders.length > 0 && <Text style={styles.quickSectionLabel}>Binders</Text>}
+            {quickBinders.map(b => {
+              const done = binderAdded.has(b.id);
+              return (
+                <TouchableOpacity
+                  key={b.id}
+                  style={[styles.quickRow, done && styles.quickRowDone]}
+                  onPress={() => quickAddToBinder(b.id)}
+                  disabled={done}
+                >
+                  <View style={[styles.quickSwatch, { backgroundColor: b.tone[0] }]} />
+                  <Text style={styles.quickRowText} numberOfLines={1}>{b.name}</Text>
+                  <Icon name={done ? 'check' : 'plus'} size={14} color={done ? Colors.gold : Colors.text3} />
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         </View>
       </Modal>
     </View>
@@ -481,6 +581,63 @@ const styles = StyleSheet.create({
   },
   loadingMore: {
     marginTop: 24,
+  },
+  quickAddBtn: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(10,10,12,0.72)',
+    borderWidth: 1,
+    borderColor: Colors.goldBorder,
+  },
+  quickCardName: {
+    fontFamily: FontFamily.display,
+    fontSize: 18,
+    color: Colors.text,
+    marginBottom: 12,
+  },
+  quickList: {
+    maxHeight: 360,
+  },
+  quickRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.line,
+  },
+  quickRowDone: {
+    opacity: 0.6,
+  },
+  quickRowText: {
+    flex: 1,
+    fontFamily: FontFamily.body,
+    fontSize: 14,
+    color: Colors.text,
+  },
+  quickSwatch: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.line,
+  },
+  quickSectionLabel: {
+    fontFamily: FontFamily.mono,
+    fontSize: 10,
+    letterSpacing: 1.6,
+    textTransform: 'uppercase',
+    color: Colors.text3,
+    marginTop: 16,
+    marginBottom: 4,
   },
   emptyState: {
     alignItems: 'center',

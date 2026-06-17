@@ -859,7 +859,10 @@ export default function CardDetailScreen() {
                 <Text style={styles.sheetEyebrow}>Add to binder</Text>
                 <Text style={styles.sheetTitle}>Choose a destination</Text>
                 <View style={styles.sheetList}>
-                  {binders.filter(b => !b.rules).map(b => (
+                  {/* Only manual and auto-add binders accept hand-picked cards.
+                      Virtual smart binders mirror the collection, so a manual
+                      add there would be invisible — exclude them. */}
+                  {binders.filter(b => !b.rules || b.rules.autoAdd).map(b => (
                     <TouchableOpacity
                       key={b.id}
                       style={styles.binderRow}
