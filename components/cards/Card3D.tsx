@@ -146,8 +146,10 @@ export function Card3D({ card, width, large = false, onPress, onLongPress, sway 
     const t = info.timestamp / 1000;
     // Ease amplitude from 0 → 1 over 1.2 s so the sway fades in after a gesture
     const amp = elapsed < 1.2 ? elapsed / 1.2 : 1.0;
-    rotateY.value = Math.sin(t * 0.7) * 4 * amp;
-    rotateX.value = Math.cos(t * 0.5) * 3 * amp;
+    rotateY.value = Math.sin(t * 0.7) * 9 * amp;
+    rotateX.value = Math.cos(t * 0.5) * 6.5 * amp;
+    // Gentle depth breathing so the tilt reads as a living 3D object.
+    scale.value = 1 + Math.sin(t * 0.45) * 0.02 * amp;
   });
 
   const swayTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);

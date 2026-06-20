@@ -27,6 +27,7 @@ import { Card3D } from '@/components/cards/Card3D';
 import { PriceChart, Range } from '@/components/charts/PriceChart';
 import { BarList } from '@/components/charts/BarList';
 import { Icon } from '@/components/ui/Icon';
+import { AnimatedPrice, FlashOnChange } from '@/components/ui/AnimatedPrice';
 import { Expandable } from '@/components/ui/Expandable';
 import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { useCard, useCardPricing, useCardPopReports } from '@/lib/api/cards';
@@ -38,6 +39,7 @@ import {
   useCollectionCopies,
   useAddToCollection,
   useRemoveItem,
+  useSetItemQuantity,
   useUpdateCopyCostBasis,
   useSellCopy,
 } from '@/lib/db/collection';
@@ -426,8 +428,11 @@ export default function CardDetailScreen() {
   const createBinder = useCreateBinder();
   const { data: copies = [] } = useCollectionCopies(card?.id ?? '');
   const isInCollection = copies.length > 0;
+  // Total copies held = sum of each line's quantity (not the number of lines).
+  const totalCopies = copies.reduce((n, c) => n + (c.quantity ?? 1), 0);
   const addToCollection = useAddToCollection();
   const removeItem = useRemoveItem();
+  const setItemQty = useSetItemQuantity();
   const updateCopyCostBasis = useUpdateCopyCostBasis();
   const sellCopy = useSellCopy();
   const { data: isWishlisted = false } = useIsWishlisted(card?.id ?? '');
@@ -620,7 +625,12 @@ export default function CardDetailScreen() {
                   </Text>
                   {v.price != null && (
                     <Text style={[styles.variantPillPrice, isActive && styles.variantPillPriceActive]}>
-                      ${fmt(v.price)}
+                      $<AnimatedPrice
+                        value={v.price}
+                        style={[styles.variantPillPrice, isActive && styles.variantPillPriceActive]}
+                        baseColor={isActive ? Colors.gold : Colors.text3}
+                        countUp={false}
+                      />
                     </Text>
                   )}
                 </TouchableOpacity>
@@ -669,7 +679,7 @@ export default function CardDetailScreen() {
                 {price != null ? (
                   <View style={styles.priceValue}>
                     <Text style={styles.priceDollar}>$</Text>
-                    <Text style={styles.priceNumber}>{fmt(price)}</Text>
+                    <AnimatedPrice value={price} style={styles.priceNumber} baseColor={Colors.text} />
                   </View>
                 ) : (
                   <Text style={styles.priceNumber}>—</Text>
@@ -683,7 +693,7 @@ export default function CardDetailScreen() {
               <View style={styles.changeBox}>
                 <Text style={styles.panelLabel}>{changeLabel}</Text>
                 {changeValue != null ? (
-                  <View style={styles.changeRow}>
+                  <FlashOnChange value={changeValue} style={styles.changeRow}>
                     <Icon
                       name={changeValue >= 0 ? 'arrow-up' : 'arrow-down'}
                       size={12}
@@ -692,7 +702,7 @@ export default function CardDetailScreen() {
                     <Text style={[styles.changePct, { color: changeValue >= 0 ? Colors.up : Colors.down }]}>
                       {changeValue >= 0 ? '+' : ''}{Math.abs(changeValue).toFixed(1)}%
                     </Text>
-                  </View>
+                  </FlashOnChange>
                 ) : (
                   <Text style={styles.changePct}>—</Text>
                 )}
@@ -785,7 +795,7 @@ export default function CardDetailScreen() {
             accessibilityRole="button"
           >
             <Text style={[styles.ctaSecondaryText, isInCollection && styles.ctaSecondaryActiveText]}>
-              {isInCollection ? `In collection (${copies.length}) ✓` : 'Add to collection'}
+              {isInCollection ? `In collection (${totalCopies}) ✓` : 'Add to collection'}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -931,7 +941,7 @@ export default function CardDetailScreen() {
             <View style={styles.sheetGrabber} />
             <Text style={styles.sheetEyebrow}>In collection</Text>
             <Text style={styles.sheetTitle}>
-              Your {copies.length === 1 ? 'copy' : `copies (${copies.length})`}
+              Your {totalCopies === 1 ? 'copy' : `copies (${totalCopies})`}
             </Text>
 
             <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
@@ -956,6 +966,29 @@ export default function CardDetailScreen() {
                         {entry.acquired_price != null ? `  ·  paid $${fmt(entry.acquired_price)}` : ''}
                       </Text>
                     </View>
+                    {/* Quick quantity edit: − decrements (removes the line at 1), + adds one. */}
+                    <View style={styles.qtyStepper}>
+                      <TouchableOpacity
+                        style={styles.qtyBtn}
+                        onPress={() => {
+                          void setItemQty(entry.item_id, card.id, entry.quantity - 1)
+                            .then(() => { if (totalCopies <= 1) setManageSheetOpen(false); });
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Remove one"
+                      >
+                        <Icon name={entry.quantity <= 1 ? 'trash' : 'minus'} size={12} color={Colors.text} />
+                      </TouchableOpacity>
+                      <Text style={styles.qtyValue}>{entry.quantity}</Text>
+                      <TouchableOpacity
+                        style={styles.qtyBtn}
+                        onPress={() => { void setItemQty(entry.item_id, card.id, entry.quantity + 1); }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Add one"
+                      >
+                        <Icon name="plus" size={12} color={Colors.text} />
+                      </TouchableOpacity>
+                    </View>
                     <TouchableOpacity
                       style={styles.copyActionBtn}
                       onPress={() => {
@@ -973,12 +1006,12 @@ export default function CardDetailScreen() {
                       style={styles.copyActionBtn}
                       onPress={() => {
                         Alert.alert(
-                          'Remove copy',
-                          `Remove this ${label} copy from your collection?`,
+                          'Remove all copies',
+                          `Remove ${entry.quantity > 1 ? `all ${entry.quantity} ` : 'this '}${label} ${entry.quantity === 1 ? 'copy' : 'copies'} from your collection?`,
                           [
                             { text: 'Cancel', style: 'cancel' },
                             {
-                              text: 'Remove',
+                              text: 'Remove all',
                               style: 'destructive',
                               onPress: async () => {
                                 await removeItem(entry.item_id, card.id);
@@ -989,9 +1022,9 @@ export default function CardDetailScreen() {
                         );
                       }}
                       accessibilityRole="button"
-                      accessibilityLabel="Remove this copy"
+                      accessibilityLabel="Remove all copies"
                     >
-                      <Text style={styles.copyRemoveText}>Remove</Text>
+                      <Icon name="trash" size={14} color={Colors.down} />
                     </TouchableOpacity>
                   </TouchableOpacity>
                 );
@@ -1928,6 +1961,24 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.bodySemi,
     fontSize: 12,
     color: Colors.down,
+  },
+  qtyStepper: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  qtyBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qtyValue: {
+    fontFamily: FontFamily.mono,
+    fontSize: 13,
+    color: Colors.text,
+    minWidth: 16,
+    textAlign: 'center',
   },
   addAnotherBtn: {
     marginTop: Spacing.md,

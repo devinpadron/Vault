@@ -18,6 +18,7 @@ const NAME_MAP: Record<string, keyof typeof Ionicons.glyphMap> = {
   trash:         'trash-outline',
   edit:          'create-outline',
   plus:          'add',
+  minus:         'remove',
   close:         'close',
   sort:          'funnel-outline',
   'arrow-up':    'trending-up',
@@ -30,6 +31,7 @@ const NAME_MAP: Record<string, keyof typeof Ionicons.glyphMap> = {
   settings:      'settings-outline',
   logout:        'log-out-outline',
   camera:        'camera-outline',
+  palette:       'color-palette-outline',
   compare:       'git-compare-outline',
   activity:      'pulse-outline',
 };

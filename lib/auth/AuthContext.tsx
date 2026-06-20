@@ -43,6 +43,11 @@ interface AuthContextValue extends AuthState {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+// Minimum gap between price prewarms. The sign-in prewarm covers launch; this
+// throttles the foreground re-prewarm so a quick app-switch doesn't re-hit
+// Scrydex, while a long-lived session still refreshes owned-card prices.
+const PREWARM_THROTTLE_MS = 30 * 60 * 1000; // 30 min
+
 // Map a Supabase auth user to our app-level User. user_metadata.full_name is
 // the standard OAuth claim; we fall back gracefully on each step.
 function sessionToUser(session: Session | null): User | null {
@@ -83,6 +88,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // lets us detect the authenticated → unauthenticated transition outside
   // the setState updater so the local wipe runs exactly once per sign-out.
   const wasAuthenticated = useRef(false);
+  // Epoch ms of the last pricing prewarm, so the foreground refresh can throttle.
+  const lastPrewarmAt = useRef(0);
   const queryClient = useQueryClient();
 
   async function runPostSigninSync(uid: string) {
@@ -96,6 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await flushPendingOps();
       // prewarm is best-effort — failure here shouldn't flip mirrorSync to
       // 'error' since the mirror itself is fine.
+      lastPrewarmAt.current = Date.now();
       prewarmFromLocalCollection().catch(err => {
         if (__DEV__) console.warn('[auth] prewarm failed:', err);
       });
@@ -181,8 +189,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // foreground, plus on a 30s heartbeat so a long-lived foreground session
     // also catches up after a connectivity blip. Both are no-ops when the
     // queue is empty or a flush is already in flight (cloud-sync dedups).
-    const onAppState = AppState.addEventListener('change', state => {
-      if (state === 'active') flushPendingOps().catch(() => {});
+    const onAppState = AppState.addEventListener('change', appStatus => {
+      if (appStatus !== 'active') return;
+      flushPendingOps().catch(() => {});
+      // Re-prewarm owned-card prices on foreground, throttled — keeps the
+      // collection's prices current through a long-lived session (the sign-in
+      // prewarm only covers launch). Best-effort; no-op when signed out.
+      if (wasAuthenticated.current && Date.now() - lastPrewarmAt.current >= PREWARM_THROTTLE_MS) {
+        lastPrewarmAt.current = Date.now();
+        prewarmFromLocalCollection().catch(err => {
+          if (__DEV__) console.warn('[auth] foreground prewarm failed:', err);
+        });
+      }
     });
     const interval = setInterval(() => {
       flushPendingOps().catch(() => {});

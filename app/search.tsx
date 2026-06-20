@@ -9,6 +9,7 @@ import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { Icon } from '@/components/ui/Icon';
 import { useSearchCards, useSearchCount, useExpansionNames, SortField, SortDir } from '@/lib/api/cards';
 import { useAddToCollection } from '@/lib/db/collection';
+import { ItemDetails } from '@/lib/db/cloud-sync';
 import { useBinders, useAddCardToBinder } from '@/lib/api/binders';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useDebouncedValue } from '@/lib/hooks/useDebouncedValue';
@@ -17,6 +18,15 @@ import { Card } from '@/types';
 import { Colors, FontFamily, PressOpacity, Radius, Spacing } from '@/constants/theme';
 
 const FILTERS = ['All', 'Name', 'Set/Pack', 'Artist', 'Rarity'];
+
+// Quick-add files a NM copy; for a multi-printing card the holofoil printing is
+// the default (falling back to the top-priced printing the card exposes).
+const HOLO_VARIANT_NAMES = new Set(['holofoil', 'unlimitedHolofoil']);
+function defaultVariantId(card: Card): string | undefined {
+  const variants = card.variantPrices ?? [];
+  const holo = variants.find(v => HOLO_VARIANT_NAMES.has(v.name));
+  return (holo ?? variants[0])?.id;
+}
 
 const GRID_COLS = 3;
 const GRID_GAP = 10;
@@ -80,6 +90,9 @@ export default function SearchScreen() {
   const [quickAddCard, setQuickAddCard] = useState<Card | null>(null);
   const [collAdded, setCollAdded] = useState(false);
   const [binderAdded, setBinderAdded] = useState<Set<string>>(new Set());
+  // Chosen printing for the quick-add (defaults to holofoil). Condition is
+  // always NM for quick-add — no condition picker here by design.
+  const [quickVariantId, setQuickVariantId] = useState<string | undefined>(undefined);
 
   const addToCollection = useAddToCollection();
   const { data: binders = [] } = useBinders();
@@ -92,13 +105,36 @@ export default function SearchScreen() {
     setQuickAddCard(card);
     setCollAdded(false);
     setBinderAdded(new Set());
+    setQuickVariantId(defaultVariantId(card));
   }, []);
   const closeQuickAdd = useCallback(() => setQuickAddCard(null), []);
+
+  // Picking a different printing means a distinct copy, so reset the "added"
+  // feedback — the new printing can still be filed.
+  const selectQuickVariant = useCallback((id: string | undefined) => {
+    setQuickVariantId(id);
+    setCollAdded(false);
+    setBinderAdded(new Set());
+  }, []);
+
+  const quickVariants = quickAddCard?.variantPrices ?? [];
+  const quickVariant = quickVariants.find(v => v.id === quickVariantId);
+
+  // The copy to file: chosen printing (or standard), always NM, value snapshot
+  // from the selected printing's price.
+  function quickDetails(): ItemDetails {
+    return {
+      variantId:   quickVariant?.id ?? null,
+      variantName: quickVariant?.displayName ?? null,
+      condition:   'NM',
+      value:       quickVariant?.price ?? quickAddCard?.value ?? null,
+    };
+  }
 
   async function quickAddToCollection() {
     if (!quickAddCard) return;
     try {
-      await addToCollection(quickAddCard);
+      await addToCollection(quickAddCard, quickDetails());
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setCollAdded(true);
     } catch (e) {
@@ -108,7 +144,7 @@ export default function SearchScreen() {
   async function quickAddToBinder(binderId: string) {
     if (!quickAddCard) return;
     try {
-      await addCardToBinder(binderId, quickAddCard);
+      await addCardToBinder(binderId, quickAddCard, quickDetails());
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setBinderAdded(prev => new Set(prev).add(binderId));
     } catch (e) {
@@ -326,6 +362,29 @@ export default function SearchScreen() {
             <Text style={styles.quickCardName} numberOfLines={1}>
               {quickAddCard.name}
             </Text>
+          )}
+
+          {/* Printing picker — only when the card has multiple. Always filed NM. */}
+          {quickVariants.length > 1 && (
+            <>
+              <Text style={styles.quickSectionLabel}>Printing · NM</Text>
+              <View style={styles.quickVariantWrap}>
+                {quickVariants.map(v => {
+                  const active = v.id === quickVariantId;
+                  return (
+                    <TouchableOpacity
+                      key={v.id ?? 'standard'}
+                      style={[styles.quickVariantPill, active && styles.quickVariantPillActive]}
+                      onPress={() => selectQuickVariant(v.id)}
+                    >
+                      <Text style={[styles.quickVariantText, active && styles.quickVariantTextActive]}>
+                        {v.displayName}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </>
           )}
 
           <ScrollView style={styles.quickList} keyboardShouldPersistTaps="handled">
@@ -639,6 +698,24 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 4,
   },
+  quickVariantWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  quickVariantPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: Colors.surface,
+  },
+  quickVariantPillActive: { borderColor: Colors.gold, backgroundColor: Colors.goldTint },
+  quickVariantText: { fontFamily: FontFamily.bodySemi, fontSize: 13, color: Colors.text2 },
+  quickVariantTextActive: { color: Colors.gold },
   emptyState: {
     alignItems: 'center',
     paddingTop: 60,

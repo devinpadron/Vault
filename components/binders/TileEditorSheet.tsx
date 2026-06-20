@@ -24,13 +24,16 @@ import * as ImagePicker from 'expo-image-picker';
 import { Icon } from '@/components/ui/Icon';
 import {
   BinderMediaItem,
+  pageColorOf,
   uploadBinderImage,
   useAddBinderMedia,
   useBinderItems,
   useBinderMedia,
   useRemoveBinderMedia,
+  useSetPageColor,
 } from '@/lib/api/binders';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { PAGE_COLORS } from '@/lib/binder-tones';
 import { CARD_ASPECT, maskBounds, PAGE_SIZE } from '@/lib/binder/grid-geometry';
 import { Colors, FontFamily, Radius, Spacing } from '@/constants/theme';
 
@@ -65,6 +68,7 @@ export function TileEditorSheet({ visible, onClose, binderId, pageNum }: Props) 
   const { width: screenWidth } = useWindowDimensions();
   const addMedia = useAddBinderMedia();
   const removeMedia = useRemoveBinderMedia();
+  const setPageColor = useSetPageColor();
   const { data: media = [] } = useBinderMedia(binderId);
   const { data: items = [] } = useBinderItems(binderId);
 
@@ -75,6 +79,25 @@ export function TileEditorSheet({ visible, onClose, binderId, pageNum }: Props) 
   const [saving, setSaving] = useState(false);
 
   const pageMedia = useMemo(() => media.filter(md => md.pageNum === pageNum), [media, pageNum]);
+  // A page holds at most one background. Split it into "any background" (image
+  // or colour — replaced when a new colour is chosen) and "colour backgrounds"
+  // only (removed when clearing the page colour, leaving a photo background).
+  const pageBackgrounds = useMemo(() => pageMedia.filter(md => md.kind === 'background'), [pageMedia]);
+  const colorBackgrounds = useMemo(() => pageBackgrounds.filter(md => pageColorOf(md)), [pageBackgrounds]);
+  const currentPageColor = colorBackgrounds.length > 0 ? pageColorOf(colorBackgrounds[0]) : null;
+
+  async function choosePageColor(color: string | null) {
+    try {
+      // Picking a colour replaces any existing background (photo or colour);
+      // "None" only clears a colour, leaving a photo background intact.
+      const replaceIds = color
+        ? pageBackgrounds.map(md => md.id)
+        : colorBackgrounds.map(md => md.id);
+      await setPageColor(binderId, pageNum, color, replaceIds);
+    } catch (e) {
+      Alert.alert('Couldn’t set page color', (e as Error).message);
+    }
+  }
   // Cells taken by other tiles OR by a card on this page can't be re-used.
   const lockedMask = useMemo(() => {
     let mask = pageMedia.reduce((a, md) => (md.kind === 'tile' ? a | (md.cellMask & 0x1ff) : a), 0);
@@ -228,6 +251,30 @@ export function TileEditorSheet({ visible, onClose, binderId, pageNum }: Props) 
             </View>
           )}
 
+          {/* Page background colour */}
+          <Text style={styles.sectionLabel}>PAGE COLOR</Text>
+          <View style={styles.swatchRow}>
+            <TouchableOpacity
+              onPress={() => choosePageColor(null)}
+              style={[styles.swatch, styles.swatchNone, !currentPageColor && styles.swatchOn]}
+              accessibilityLabel="No page color"
+            >
+              <Icon name="close" size={14} color={Colors.text2} />
+            </TouchableOpacity>
+            {PAGE_COLORS.map(color => (
+              <TouchableOpacity
+                key={color}
+                onPress={() => choosePageColor(color)}
+                style={[
+                  styles.swatch,
+                  { backgroundColor: color },
+                  currentPageColor === color && styles.swatchOn,
+                ]}
+                accessibilityLabel={`Page color ${color}`}
+              />
+            ))}
+          </View>
+
           {!pickedUri ? (
             <TouchableOpacity style={styles.pickBtn} onPress={pick}>
               <Icon name="camera" size={20} color={Colors.gold} />
@@ -331,10 +378,17 @@ function MaybeGesture({
 }
 
 function ExistingChip({ media, onDelete }: { media: BinderMediaItem; onDelete: () => void }) {
+  const color = pageColorOf(media);
   return (
     <View style={styles.existingChip}>
-      <Image source={{ uri: media.url }} style={styles.existingThumb} contentFit="cover" />
-      <Text style={styles.existingLabel}>{media.kind === 'background' ? 'Background' : 'Tile'}</Text>
+      {color ? (
+        <View style={[styles.existingThumb, { backgroundColor: color }]} />
+      ) : (
+        <Image source={{ uri: media.url }} style={styles.existingThumb} contentFit="cover" />
+      )}
+      <Text style={styles.existingLabel}>
+        {color ? 'Color' : media.kind === 'background' ? 'Background' : 'Tile'}
+      </Text>
       <TouchableOpacity onPress={onDelete} hitSlop={8} accessibilityLabel="Delete photo">
         <Icon name="trash" size={14} color={Colors.down} />
       </TouchableOpacity>
@@ -365,6 +419,18 @@ const styles = StyleSheet.create({
   },
   title: { fontFamily: FontFamily.display, fontSize: 24, color: Colors.text, marginBottom: 16 },
   existingRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  sectionLabel: {
+    fontFamily: FontFamily.mono, fontSize: 10, letterSpacing: 1.6,
+    color: Colors.text3, marginBottom: 10,
+  },
+  swatchRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
+  swatch: {
+    width: 34, height: 34, borderRadius: Radius.full,
+    borderWidth: 2, borderColor: 'transparent',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  swatchNone: { backgroundColor: Colors.glass, borderColor: Colors.line },
+  swatchOn: { borderColor: Colors.gold },
   existingChip: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingRight: 10, paddingLeft: 4, paddingVertical: 4,

@@ -89,7 +89,6 @@ export default function FriendProfileScreen() {
           <TouchableOpacity style={styles.navBtn} onPress={() => router.back()}>
             <Icon name="chevron-left" size={18} color={Colors.text} />
           </TouchableOpacity>
-          <View style={styles.navBtn} />
         </View>
 
         <View style={styles.hero}>
@@ -113,13 +112,13 @@ export default function FriendProfileScreen() {
             <Stat label="RECENT" value={friend.recent || '—'} />
           </View>
 
-          <FriendActions friendId={friend.id} status={status} />
+          <FriendActions friendId={friend.id} status={status} friendName={friend.name} />
         </View>
 
         <View style={styles.divider} />
 
         <View style={styles.bindersSection}>
-          {main && (
+          {main && status !== 'accepted' && (
             <TouchableOpacity
               style={styles.compareRow}
               onPress={() =>
@@ -215,9 +214,11 @@ function Stat({ label, value }: { label: string; value: string }) {
 function FriendActions({
   friendId,
   status,
+  friendName,
 }: {
   friendId: string;
   status: ReturnType<typeof useFriendshipStatus>['data'];
+  friendName: string;
 }) {
   const send    = useSendFriendRequest();
   const respond = useRespondToFriendRequest();
@@ -227,9 +228,19 @@ function FriendActions({
   if (status === 'accepted') {
     return (
       <View style={styles.ctaRow}>
-        <View style={styles.ctaPrimary}>
-          <Text style={styles.ctaPrimaryText}>Friends</Text>
-        </View>
+        <TouchableOpacity
+          style={styles.ctaPrimary}
+          onPress={() =>
+            router.push(`/friend-diff?id=${friendId}&name=${encodeURIComponent(friendName)}`)
+          }
+          accessibilityRole="button"
+          accessibilityLabel="Compare collections"
+        >
+          <View style={styles.ctaPrimaryContent}>
+            <Icon name="compare" size={15} color={Colors.bg} />
+            <Text style={styles.ctaPrimaryText}>Compare</Text>
+          </View>
+        </TouchableOpacity>
         <TouchableOpacity
           style={styles.ctaGhost}
           onPress={() =>
@@ -373,6 +384,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   ctaPrimaryMuted: { backgroundColor: 'rgba(255,215,0,0.2)' },
+  ctaPrimaryContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   ctaPrimaryText: { fontFamily: FontFamily.bodySemi, fontSize: 14, color: Colors.bg },
   ctaPrimaryTextMuted: { color: 'rgba(10,10,12,0.6)' },
   ctaGhost: {

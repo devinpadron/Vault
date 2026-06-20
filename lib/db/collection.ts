@@ -2,7 +2,9 @@
 // mutations enqueue ops to the offline queue, which flushes them to Supabase.
 // See lib/db/cloud-sync.ts for the sync engine.
 
+import { useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabase';
 import { getDb } from './database';
 import {
   addItemToCollection,
@@ -12,11 +14,14 @@ import {
   recordSaleAndRemoveById,
   removeItemFromCollectionByCard,
   removeItemById,
+  setItemQuantity,
   setCollectionVisibility,
   setItemCostBasis,
   setItemCostBasisById,
 } from './cloud-sync';
 import { autoFileCardIntoBinders } from '@/lib/api/binders';
+import { usePrewarmVisiblePricing } from '@/lib/api/cards';
+import { formatVariantName } from '@/lib/api/types';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { Card } from '@/types';
 import { CollectionEntry } from '@/lib/filters/collection';
@@ -44,6 +49,7 @@ export function useCollectionEntries() {
       const rows = await db.getAllAsync<{
         item_id: string;
         card_json: string;
+        quantity: number;
         added_at: number;
         acquired_price: number | null;
         acquired_at: number | null;
@@ -52,7 +58,7 @@ export function useCollectionEntries() {
         grader: string | null;
         grade: string | null;
       }>(
-        `SELECT i.id AS item_id, i.card_json, i.added_at, i.acquired_price, i.acquired_at,
+        `SELECT i.id AS item_id, i.card_json, i.quantity, i.added_at, i.acquired_price, i.acquired_at,
                 i.variant_name, i.condition, i.grader, i.grade
            FROM cloud_collection_items i
            JOIN cloud_collections c ON c.id = i.collection_id
@@ -63,6 +69,7 @@ export function useCollectionEntries() {
       return rows.map(r => ({
         item_id:        r.item_id,
         card:           JSON.parse(r.card_json) as Card,
+        quantity:       r.quantity ?? 1,
         added_at:       r.added_at,
         acquired_price: r.acquired_price,
         acquired_at:    r.acquired_at,
@@ -81,6 +88,125 @@ export function useCollectionCards() {
     ...q,
     data: (q.data ?? []).map(e => e.card),
   };
+}
+
+// ─── Live pricing overlay ────────────────────────────────────────────────────
+// The collection mirror snapshots each card's value into card_json at add-time,
+// so tiles would otherwise show a frozen price. These hooks read the *current*
+// raw price from Supabase `card_prices_current` (the same source the card-detail
+// and search screens use) and overlay it, so the collection reflects the latest
+// prewarm/cron refresh instead of the add-time number.
+
+interface LivePrice { market: number | null; trend30d: number | null; }
+interface PriceLookup {
+  byKey:    Map<string, LivePrice>;   // `${cardId}|${variant}|${condition}` → price
+  byCardNm: Map<string, LivePrice>;   // cardId → best NM raw price (headline fallback)
+}
+
+type RawPriceRow = {
+  market: number | null;
+  condition: string | null;
+  trend_30d_pct: number | null;
+  card_variants:
+    | { card_id: string; name: string }
+    | { card_id: string; name: string }[]
+    | null;
+};
+
+/** Current raw prices for a set of cards, keyed for per-copy and headline lookup. */
+export function useLiveCardPrices(cardIds: string[]) {
+  // Sorted-unique id list → stable query key (avoids refetch churn on reorder).
+  const ids = useMemo(() => Array.from(new Set(cardIds)).sort(), [cardIds]);
+  return useQuery<PriceLookup>({
+    queryKey: ['live-card-prices', ids],
+    enabled: ids.length > 0,
+    staleTime: 1000 * 60 * 5,
+    queryFn: async () => {
+      const byKey = new Map<string, LivePrice>();
+      const byCardNm = new Map<string, LivePrice>();
+      // Chunk so the PostgREST `in.(...)` filter URL stays a sane length.
+      for (let i = 0; i < ids.length; i += 200) {
+        const chunk = ids.slice(i, i + 200);
+        const { data, error } = await supabase
+          .from('card_prices_current')
+          .select('market, condition, trend_30d_pct, card_variants!inner(card_id, name)')
+          .eq('type', 'raw')
+          .in('card_variants.card_id', chunk);
+        if (error) throw new Error(error.message);
+        for (const raw of (data ?? []) as RawPriceRow[]) {
+          const cv = Array.isArray(raw.card_variants) ? raw.card_variants[0] : raw.card_variants;
+          if (!cv) continue;
+          const cond = raw.condition ?? 'NM';
+          const price: LivePrice = { market: raw.market, trend30d: raw.trend_30d_pct };
+          // Key under both the raw Scrydex name ('holofoil') and the display
+          // name ('Holofoil') — collection copies store the display name, so the
+          // per-printing lookup must match either form.
+          byKey.set(`${cv.card_id}|${cv.name}|${cond}`, price);
+          byKey.set(`${cv.card_id}|${formatVariantName(cv.name)}|${cond}`, price);
+          if (cond === 'NM' && raw.market != null) {
+            const cur = byCardNm.get(cv.card_id);
+            if (!cur || (cur.market ?? 0) < raw.market) byCardNm.set(cv.card_id, price);
+          }
+        }
+      }
+      return { byKey, byCardNm };
+    },
+  });
+}
+
+// Resolve the live price for one copy. Graded copies keep their snapshot (graded
+// pricing is listings-based, not in card_prices_current). A copy with a recorded
+// printing must match THAT printing — its exact condition, then the same
+// printing's NM — and never fall back to the card's headline (max) price, or a
+// $30 holofoil would read as a $300 Illustration Rare. Only copies with no
+// recorded printing use the headline NM price.
+function liveValueFor(entry: CollectionEntry, lookup: PriceLookup): LivePrice | null {
+  if (entry.grader) return null;
+  const cond = entry.condition || 'NM';
+  if (entry.variant_name) {
+    return (
+      lookup.byKey.get(`${entry.card.id}|${entry.variant_name}|${cond}`) ??
+      lookup.byKey.get(`${entry.card.id}|${entry.variant_name}|NM`) ??
+      null   // unmatched printing → keep the add-time snapshot value
+    );
+  }
+  return lookup.byCardNm.get(entry.card.id) ?? null;
+}
+
+/**
+ * Collection entries with each card's value/trend overlaid from live pricing.
+ * Reads instantly from the SQLite mirror (offline-safe), then re-renders with
+ * fresh prices once the network lookup resolves. The drop-in replacement for
+ * useCollectionEntries on surfaces that display value.
+ */
+export function useLiveCollectionEntries() {
+  const queryClient = useQueryClient();
+  const base = useCollectionEntries();
+  const ids = useMemo(
+    () => (base.data ?? []).map(e => e.card.id),
+    [base.data],
+  );
+  // Revalidate owned cards on view: stale ones refresh server-side, then we
+  // re-read the overlay (and portfolio total) so the new prices surface.
+  usePrewarmVisiblePricing(ids, () => {
+    queryClient.invalidateQueries({ queryKey: ['live-card-prices'] });
+    queryClient.invalidateQueries({ queryKey: ['portfolio-history'] });
+  });
+  const prices = useLiveCardPrices(ids);
+  const data = useMemo<CollectionEntry[]>(() => {
+    const entries = base.data ?? [];
+    const lookup = prices.data;
+    if (!lookup) return entries;
+    return entries.map(e => {
+      const live = liveValueFor(e, lookup);
+      if (!live || live.market == null) return e;
+      return {
+        ...e,
+        card: { ...e.card, value: live.market, trend30d: live.trend30d ?? e.card.trend30d },
+      };
+    });
+  }, [base.data, prices.data]);
+  return { ...base, data };
 }
 
 export function useIsInCollection(cardId: string) {
@@ -109,7 +235,8 @@ export function useAddToCollection() {
   return async (card: Card, details?: ItemDetails): Promise<void> => {
     if (!user) throw new Error('Sign in to save cards.');
     const collectionId = await getOrCreateDefaultCollection(user.id, 'collection', 'Main');
-    await addItemToCollection(collectionId, card, details);
+    // incrementIfExists: adding an identical copy bumps quantity rather than no-op.
+    await addItemToCollection(collectionId, card, details, 0, true);
     // File the card into any auto-add binder it matches. Best-effort — a binder
     // file failing shouldn't fail the collection add.
     await autoFileCardIntoBinders(user.id, card).catch(() => {});
@@ -136,6 +263,7 @@ export function useCollectionCopies(cardId: string) {
       const rows = await db.getAllAsync<{
         item_id: string;
         card_json: string;
+        quantity: number;
         added_at: number;
         acquired_price: number | null;
         acquired_at: number | null;
@@ -144,7 +272,7 @@ export function useCollectionCopies(cardId: string) {
         grader: string | null;
         grade: string | null;
       }>(
-        `SELECT i.id AS item_id, i.card_json, i.added_at, i.acquired_price, i.acquired_at,
+        `SELECT i.id AS item_id, i.card_json, i.quantity, i.added_at, i.acquired_price, i.acquired_at,
                 i.variant_name, i.condition, i.grader, i.grade
            FROM cloud_collection_items i
            JOIN cloud_collections c ON c.id = i.collection_id
@@ -155,6 +283,7 @@ export function useCollectionCopies(cardId: string) {
       return rows.map(r => ({
         item_id:        r.item_id,
         card:           JSON.parse(r.card_json) as Card,
+        quantity:       r.quantity ?? 1,
         added_at:       r.added_at,
         acquired_price: r.acquired_price,
         acquired_at:    r.acquired_at,
@@ -198,6 +327,22 @@ export function useRemoveItem() {
     queryClient.invalidateQueries({ queryKey: ['collection-copies', user.id, cardId] });
     queryClient.invalidateQueries({ queryKey: ['portfolio-summary', user.id] });
     queryClient.invalidateQueries({ queryKey: ['portfolio-history', user.id] });
+  };
+}
+
+/** Set a copy's quantity (copy-aware). quantity<=0 removes the whole line.
+ *  Pass the card id so per-card queries refresh. */
+export function useSetItemQuantity() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return async (itemId: string, cardId: string, quantity: number): Promise<void> => {
+    if (!user) throw new Error('Sign in to manage your collection.');
+    await setItemQuantity(itemId, quantity);
+    queryClient.invalidateQueries({ queryKey: ['collection-entries', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['in-collection', user.id, cardId] });
+    queryClient.invalidateQueries({ queryKey: ['collection-copies', user.id, cardId] });
+    queryClient.invalidateQueries({ queryKey: ['portfolio-history', user.id] });
+    invalidateBinderQueries(queryClient, user.id);
   };
 }
 
@@ -358,7 +503,7 @@ export interface PortfolioSummary {
  * entries or sales change (both invalidated by the relevant mutations).
  */
 export function usePortfolioSummary() {
-  const { data: entries = [] } = useCollectionEntries();
+  const { data: entries = [] } = useLiveCollectionEntries();
   const { data: sales   = [] } = useSales();
 
   const year = new Date().getFullYear();
@@ -368,10 +513,11 @@ export function usePortfolioSummary() {
   let basisValueSum  = 0;
   let itemsWithBasis = 0;
   for (const e of entries) {
-    currentValue += e.card.value || 0;
+    const lineValue = (e.card.value || 0) * (e.quantity ?? 1);
+    currentValue += lineValue;
     if (e.acquired_price != null) {
       costBasisTotal += e.acquired_price;
-      basisValueSum  += e.card.value || 0;
+      basisValueSum  += lineValue;
       itemsWithBasis += 1;
     }
   }

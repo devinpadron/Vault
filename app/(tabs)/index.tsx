@@ -111,7 +111,7 @@ export default function HomeScreen() {
       {/* Featured card */}
       <Animated.View entering={FadeInDown.delay(160).duration(340)}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.eyebrow}>Featured · Card of the day</Text>
+          <Text style={styles.eyebrow}>Featured · Card of the week</Text>
         </View>
         <View style={styles.featuredCard}>
           <LinearGradient

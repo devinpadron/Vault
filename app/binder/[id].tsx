@@ -20,6 +20,7 @@ import { ErrorPanel } from '@/components/ui/ErrorPanel';
 import { BinderBoard } from '@/components/binders/BinderBoard';
 import { TileEditorSheet } from '@/components/binders/TileEditorSheet';
 import { CoverPickerSheet } from '@/components/binders/CoverPickerSheet';
+import { BinderColorSheet } from '@/components/binders/BinderColorSheet';
 import { binderPageCount } from '@/lib/binder/reorder-model';
 import {
   BinderItem,
@@ -33,9 +34,15 @@ import {
   useRenameBinder,
   useSetBinderCover,
   useSetBinderItemPositions,
+  useSetBinderTone,
   useUpdateBinderRules,
 } from '@/lib/api/binders';
-import { useFriendBinder, useFriendBinderCards } from '@/lib/api/friends';
+import {
+  useFriendBinder,
+  useFriendBinderCards,
+  useFriendBinderItems,
+  useFriendBinderMedia,
+} from '@/lib/api/friends';
 import { useAllSetNames } from '@/lib/api/cards';
 import { ALL_RARITIES } from '@/lib/api/types';
 import { useAuth } from '@/lib/auth/AuthContext';
@@ -72,10 +79,15 @@ export default function BinderOpenScreen() {
   const refetch     = isOwn ? ownQuery.refetch : friendQuery.refetch;
   const binderCards = (isOwn ? ownCardsQuery.data : friendCardsQuery.data) ?? [];
 
-  // Owned binders carry real item rows (needed for drag-reorder) + media; friend
-  // binders are read-only cards with no local mirror.
+  // Owned binders carry real item rows (needed for drag-reorder) + media from
+  // the local mirror. Friend binders read their items (with real slot positions)
+  // and media straight from Supabase under RLS — there's no local mirror for
+  // someone else's data, so the uploader's tiles only surface this way.
   const ownItemsQuery = useBinderItems(isOwn ? (id ?? '') : '');
-  const { data: media = [] } = useBinderMedia(isOwn ? (id ?? '') : '');
+  const friendItemsQuery = useFriendBinderItems(!isOwn ? (id ?? '') : '');
+  const { data: ownMedia = [] } = useBinderMedia(isOwn ? (id ?? '') : '');
+  const { data: friendMedia = [] } = useFriendBinderMedia(!isOwn ? (id ?? '') : '');
+  const media = isOwn ? ownMedia : friendMedia;
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -85,6 +97,7 @@ export default function BinderOpenScreen() {
   const [editing, setEditing] = useState(false);
   const [beautifyOpen, setBeautifyOpen] = useState(false);
   const [coverOpen, setCoverOpen] = useState(false);
+  const [colorOpen, setColorOpen] = useState(false);
   const [draftRules, setDraftRules] = useState<SmartBinderRules | null>(null);
 
   // Rule-editor options: owned sets/rarities first (familiar), then the rest of
@@ -111,6 +124,7 @@ export default function BinderOpenScreen() {
   const deleteBinder = useDeleteBinder();
   const setPositions = useSetBinderItemPositions();
   const setCover = useSetBinderCover();
+  const setTone = useSetBinderTone();
   const reconcileTiles = useReconcileBinderTiles();
 
   // Recover any cards hidden behind a tile (legacy collisions): move them to
@@ -181,20 +195,45 @@ export default function BinderOpenScreen() {
   // Only owned, real-row binders can be rearranged/decorated.
   const canEdit = isOwn && !isVirtual;
 
-  // Drag-reorder needs the item ids; for virtual/friend binders we synthesize a
-  // read-only list keyed on card id (no reordering exposed).
+  // Drag-reorder needs the item ids. Friend binders bring their real slot
+  // positions (so cards stay aligned with the owner's photo tiles); virtual
+  // smart binders have no rows, so we synthesize a dense read-only list.
   const items: BinderItem[] = canEdit
     ? (ownItemsQuery.data ?? [])
-    : binderCards.map((c, i) => ({ itemId: c.id, card: c, position: i }));
+    : !isOwn
+      ? (friendItemsQuery.data ?? [])
+      : binderCards.map((c, i) => ({ itemId: c.id, card: c, position: i }));
 
   const maxCardSlot = items.reduce((mx, it) => Math.max(mx, it.position), -1);
   const maxMediaPage = media.reduce((mx, md) => Math.max(mx, md.pageNum), 0);
-  const pageCount = binderPageCount(maxCardSlot, maxMediaPage);
+  // While editing, expose one extra empty page past the content so a dragged
+  // card can be dropped onto it to spawn a new page (iPhone home-screen style).
+  // The board adds the same trailing page, so the counts stay aligned.
+  const editingBoard = editing && canEdit;
+  const pageCount = binderPageCount(maxCardSlot, maxMediaPage) + (editingBoard ? 1 : 0);
+  // Keep the rendered page in range — the phantom page vanishes when editing
+  // ends, which can leave `activePage` pointing one past the last real page.
+  const viewPage = Math.max(0, Math.min(activePage, pageCount - 1));
 
-  function handleShare() {
-    // Include the owner so a friend's deep link round-trips to the friend
-    // view, not a "binder not found" on the recipient's local mirror.
-    const path = isOwn ? `/binder/${b.id}` : `/binder/${b.id}?ownerId=${ownerId}`;
+  async function handleShare() {
+    // Sharing implies "let others see this": a private binder is invisible to
+    // the recipient under RLS, so auto-flip an owned private binder to public
+    // before handing out the link. (We can't change a friend's visibility.)
+    if (isOwn && !isPublic) {
+      try {
+        await setVisibility({ collectionId: b.id }, true);
+      } catch (e) {
+        Alert.alert('Share failed', `Couldn't make this binder public: ${(e as Error).message}`);
+        return;
+      }
+    }
+    // Always stamp the owner id on the link. The recipient has no local mirror
+    // of someone else's binder, so without it the deep link resolves to the
+    // owner-only path and dead-ends at "binder not found". With it, anyone who
+    // isn't the owner round-trips into the read-only friend view; the owner
+    // themselves still sees their own editable view (ownerId === their id).
+    const linkOwnerId = isOwn ? user?.id : ownerId;
+    const path = `/binder/${b.id}?ownerId=${linkOwnerId}`;
     const deepLink = Linking.createURL(path);
     const possessive = isOwn ? 'my' : 'this';
     const body = `Check out ${possessive} "${b.name}" binder on Vault — ${b.count} cards`;
@@ -343,9 +382,7 @@ export default function BinderOpenScreen() {
               <Icon name="menu" size={18} color={Colors.text} />
             </TouchableOpacity>
           </View>
-        ) : (
-          <View style={styles.navBtn} />
-        )}
+        ) : null}
       </View>
 
       {/* Title */}
@@ -353,7 +390,7 @@ export default function BinderOpenScreen() {
         <Text style={styles.eyebrow}>
           {isSmart ? 'SMART · ' : ''}
           {binder.subtitle || `${binder.count} ${binder.count === 1 ? 'CARD' : 'CARDS'}`}
-          {pageCount > 1 ? ` · PAGE ${activePage + 1}/${pageCount}` : ''}
+          {pageCount > 1 ? ` · PAGE ${viewPage + 1}/${pageCount}` : ''}
         </Text>
         <Text style={styles.title}>{binder.name}</Text>
       </View>
@@ -363,8 +400,8 @@ export default function BinderOpenScreen() {
         items={items}
         media={media}
         tone={binder.tone}
-        editing={editing && canEdit}
-        activePage={activePage}
+        editing={editingBoard}
+        activePage={viewPage}
         onPageChange={p => setActivePage(Math.max(0, Math.min(pageCount - 1, p)))}
         onPressCard={card => router.push(`/card/${card.id}`)}
         onRemoveCard={confirmRemoveCard}
@@ -377,7 +414,7 @@ export default function BinderOpenScreen() {
       {pageCount > 1 && (
         <View style={styles.dotsRow}>
           {Array.from({ length: pageCount }).map((_, i) => (
-            <View key={i} style={[styles.dot, i === activePage && styles.dotActive]} />
+            <View key={i} style={[styles.dot, i === viewPage && styles.dotActive]} />
           ))}
         </View>
       )}
@@ -397,9 +434,9 @@ export default function BinderOpenScreen() {
             <TouchableOpacity
               style={styles.ctaIcon}
               onPress={() => setBeautifyOpen(true)}
-              accessibilityLabel="Add photo"
+              accessibilityLabel="Edit page"
             >
-              <Icon name="camera" size={16} color={Colors.text} />
+              <Icon name="edit" size={16} color={Colors.text} />
             </TouchableOpacity>
           </>
         ) : (
@@ -457,6 +494,16 @@ export default function BinderOpenScreen() {
             >
               <Icon name="star" size={18} color={Colors.text} />
               <Text style={styles.menuLabel}>Choose cover</Text>
+            </TouchableOpacity>
+          )}
+
+          {isOwn && (
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => { setMenuOpen(false); setColorOpen(true); }}
+            >
+              <Icon name="palette" size={18} color={Colors.text} />
+              <Text style={styles.menuLabel}>Change color</Text>
             </TouchableOpacity>
           )}
 
@@ -580,6 +627,16 @@ export default function BinderOpenScreen() {
         initial={b.covers.map(c => c.id)}
         onSave={ids =>
           setCover(b.id, ids).catch(e => Alert.alert('Save failed', (e as Error).message))
+        }
+      />
+
+      {/* Color picker — recolor the binder's gradient tone */}
+      <BinderColorSheet
+        visible={colorOpen}
+        onClose={() => setColorOpen(false)}
+        current={b.tone}
+        onPick={tone =>
+          setTone(b.id, tone).catch(e => Alert.alert('Save failed', (e as Error).message))
         }
       />
     </View>

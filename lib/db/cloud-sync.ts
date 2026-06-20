@@ -94,6 +94,9 @@ export interface ItemDetails {
   // else the selected variant's raw NM price). Snapshotted into card_json so
   // portfolio totals / sort / filter read the right number without re-fetching.
   value?: number | null;
+  // How many copies this add represents. New row → inserted at this count;
+  // existing identical row (when incrementing) → bumped by this much. Default 1.
+  quantity?: number;
 }
 
 /**
@@ -109,27 +112,6 @@ export function applyCopyValue(base: Card, details: ItemDetails | null | undefin
       : { ...base, value: details.value };
   }
   return graded ? { ...base, change: 0, trend30d: null } : base;
-}
-
-export type GradingStage =
-  | 'received' | 'research' | 'grading' | 'shipped_back' | 'completed';
-
-export interface MirrorGrading {
-  id:              string;
-  user_id:         string;
-  card_id:         string;
-  card_name:       string;
-  card_set:        string | null;
-  grader:          string;
-  submission_id:   string | null;
-  stage:           GradingStage;
-  submitted_at:    number;
-  returned_at:     number | null;
-  returned_grade:  string | null;
-  declared_value:  number | null;
-  notes:           string | null;
-  created_at:      number;
-  updated_at:      number;
 }
 
 export interface MirrorSale {
@@ -218,7 +200,6 @@ export async function wipeLocalUserData(): Promise<void> {
         DELETE FROM cloud_collections;
         DELETE FROM cloud_collection_items;
         DELETE FROM cloud_card_sales;
-        DELETE FROM cloud_card_grading;
         DELETE FROM cloud_binder_media;
         DELETE FROM pending_ops;
       `);
@@ -342,22 +323,6 @@ async function doPull(userId: string): Promise<void> {
   if (sErr) throw new Error(`pull sales: ${sErr.message}`);
   const sales: SaleRow[] = (salesData ?? []) as SaleRow[];
 
-  // Pull grading queue.
-  type GradingRow = {
-    id: string; user_id: string; card_id: string;
-    card_name: string; card_set: string | null;
-    grader: string; submission_id: string | null; stage: string;
-    submitted_at: string; returned_at: string | null;
-    returned_grade: string | null; declared_value: number | null;
-    notes: string | null; created_at: string; updated_at: string;
-  };
-  const { data: gradingData, error: gErr } = await supabase
-    .from('card_grading_submissions')
-    .select('id, user_id, card_id, card_name, card_set, grader, submission_id, stage, submitted_at, returned_at, returned_grade, declared_value, notes, created_at, updated_at')
-    .eq('user_id', userId);
-  if (gErr) throw new Error(`pull grading: ${gErr.message}`);
-  const grading: GradingRow[] = (gradingData ?? []) as GradingRow[];
-
   // Pull binder media (photo tiles + full-page backgrounds).
   type BinderMediaRow = {
     id: string; binder_id: string; user_id: string;
@@ -454,7 +419,7 @@ async function doPull(userId: string): Promise<void> {
       `SELECT COUNT(*) AS n FROM pending_ops WHERE status != 'failed'`,
     );
     if ((undrained?.n ?? 0) > 0) return;
-    await db.execAsync(`DELETE FROM cloud_collections; DELETE FROM cloud_collection_items; DELETE FROM cloud_card_sales; DELETE FROM cloud_card_grading; DELETE FROM cloud_binder_media;`);
+    await db.execAsync(`DELETE FROM cloud_collections; DELETE FROM cloud_collection_items; DELETE FROM cloud_card_sales; DELETE FROM cloud_binder_media;`);
 
     const collectionRows: SqlValue[][] = (collectionsData ?? []).map(raw => {
       const c = raw as {
@@ -544,23 +509,6 @@ async function doPull(userId: string): Promise<void> {
 
     await insertRows(
       db,
-      `INSERT INTO cloud_card_grading
-       (id, user_id, card_id, card_name, card_set, grader, submission_id, stage,
-        submitted_at, returned_at, returned_grade, declared_value, notes, created_at, updated_at)`,
-      15,
-      grading.map(g => [
-        g.id, g.user_id, g.card_id, g.card_name, g.card_set,
-        g.grader, g.submission_id, g.stage,
-        new Date(g.submitted_at).getTime(),
-        g.returned_at ? new Date(g.returned_at).getTime() : null,
-        g.returned_grade, g.declared_value, g.notes,
-        new Date(g.created_at).getTime(),
-        new Date(g.updated_at).getTime(),
-      ]),
-    );
-
-    await insertRows(
-      db,
       `INSERT INTO cloud_binder_media
        (id, binder_id, user_id, page_num, kind, cell_mask, storage_key, transform, created_at, updated_at)`,
       10,
@@ -610,29 +558,13 @@ export type PendingOp =
   | { op_type: 'set_cost_basis_by_id'; payload: { id: string; acquired_price: number | null; acquired_at: string | null } }
   | { op_type: 'record_sale';       payload: { id: string; collection_id: string | null; card_id: string; card_name: string; card_set: string | null; cost_basis: number | null; sale_price: number; sold_at: string } }
   | { op_type: 'set_collection_visibility'; payload: { id: string; is_public: boolean } }
-  | { op_type: 'upsert_grading';    payload: GradingUpsertPayload }
-  | { op_type: 'delete_grading';    payload: { id: string } }
   | { op_type: 'set_collection_rules'; payload: { id: string; rules: SmartBinderRules | null } }
   | { op_type: 'set_collection_cover'; payload: { id: string; cover_card_ids: string[] | null } }
+  | { op_type: 'set_collection_tone'; payload: { id: string; tone_start: string; tone_end: string } }
   | { op_type: 'reorder_item';      payload: { id: string; position: number } }
   | { op_type: 'add_binder_media';    payload: { id: string; binder_id: string; page_num: number; kind: BinderMediaKind; cell_mask: number; storage_key: string; transform: unknown | null } }
   | { op_type: 'update_binder_media'; payload: { id: string; page_num?: number; cell_mask?: number; transform?: unknown | null } }
   | { op_type: 'remove_binder_media'; payload: { id: string } };
-
-export interface GradingUpsertPayload {
-  id: string;
-  card_id: string;
-  card_name: string;
-  card_set: string | null;
-  grader: string;
-  submission_id: string | null;
-  stage: GradingStage;
-  submitted_at: string;            // ISO date
-  returned_at: string | null;      // ISO date
-  returned_grade: string | null;
-  declared_value: number | null;
-  notes: string | null;
-}
 
 async function enqueue(op: PendingOp): Promise<void> {
   const db = await getDb();
@@ -727,6 +659,23 @@ export async function setCollectionCover(id: string, coverCardIds: string[] | nu
   await enqueue({ op_type: 'set_collection_cover', payload: { id, cover_card_ids: value } });
 }
 
+/** Recolor a binder: update its gradient tone pair (tone_start, tone_end). */
+export async function setCollectionTone(
+  id: string,
+  toneStart: string,
+  toneEnd: string,
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE cloud_collections SET tone_start = ?, tone_end = ?, updated_at = ? WHERE id = ?`,
+    [toneStart, toneEnd, Date.now(), id],
+  );
+  await enqueue({
+    op_type: 'set_collection_tone',
+    payload: { id, tone_start: toneStart, tone_end: toneEnd },
+  });
+}
+
 export async function deleteCollection(id: string): Promise<void> {
   const db = await getDb();
   await db.withTransactionAsync(async () => {
@@ -743,92 +692,6 @@ export async function renameCollection(id: string, name: string): Promise<void> 
     [name, Date.now(), id],
   );
   await enqueue({ op_type: 'rename_collection', payload: { id, name } });
-}
-
-// ─── Grading submissions ─────────────────────────────────────────────────────
-
-export interface GradingUpsertInput {
-  id?: string;                       // omit for new, supply to update
-  userId: string;
-  cardId: string;
-  cardName: string;
-  cardSet: string | null;
-  grader: string;
-  submissionId?: string | null;
-  stage: GradingStage;
-  submittedAtMs: number;
-  returnedAtMs?: number | null;
-  returnedGrade?: string | null;
-  declaredValue?: number | null;
-  notes?: string | null;
-}
-
-/** Insert or update a grading submission. Upsert keyed on the row id. */
-export async function upsertGradingSubmission(input: GradingUpsertInput): Promise<string> {
-  const db = await getDb();
-  const id = input.id ?? uuidv4();
-  const now = Date.now();
-  const existing = await db.getFirstAsync<{ id: string; created_at: number }>(
-    `SELECT id, created_at FROM cloud_card_grading WHERE id = ?`,
-    [id],
-  );
-  const createdAt = existing?.created_at ?? now;
-
-  if (existing) {
-    await db.runAsync(
-      `UPDATE cloud_card_grading
-          SET card_id = ?, card_name = ?, card_set = ?, grader = ?,
-              submission_id = ?, stage = ?, submitted_at = ?, returned_at = ?,
-              returned_grade = ?, declared_value = ?, notes = ?, updated_at = ?
-        WHERE id = ?`,
-      [
-        input.cardId, input.cardName, input.cardSet, input.grader,
-        input.submissionId ?? null, input.stage,
-        input.submittedAtMs, input.returnedAtMs ?? null,
-        input.returnedGrade ?? null, input.declaredValue ?? null,
-        input.notes ?? null, now, id,
-      ],
-    );
-  } else {
-    await db.runAsync(
-      `INSERT INTO cloud_card_grading
-       (id, user_id, card_id, card_name, card_set, grader, submission_id, stage,
-        submitted_at, returned_at, returned_grade, declared_value, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id, input.userId, input.cardId, input.cardName, input.cardSet,
-        input.grader, input.submissionId ?? null, input.stage,
-        input.submittedAtMs, input.returnedAtMs ?? null,
-        input.returnedGrade ?? null, input.declaredValue ?? null,
-        input.notes ?? null, createdAt, now,
-      ],
-    );
-  }
-
-  await enqueue({
-    op_type: 'upsert_grading',
-    payload: {
-      id,
-      card_id:        input.cardId,
-      card_name:      input.cardName,
-      card_set:       input.cardSet,
-      grader:         input.grader,
-      submission_id:  input.submissionId ?? null,
-      stage:          input.stage,
-      submitted_at:   new Date(input.submittedAtMs).toISOString().slice(0, 10),
-      returned_at:    input.returnedAtMs ? new Date(input.returnedAtMs).toISOString().slice(0, 10) : null,
-      returned_grade: input.returnedGrade ?? null,
-      declared_value: input.declaredValue ?? null,
-      notes:          input.notes ?? null,
-    },
-  });
-  return id;
-}
-
-export async function deleteGradingSubmission(id: string): Promise<void> {
-  const db = await getDb();
-  await db.runAsync(`DELETE FROM cloud_card_grading WHERE id = ?`, [id]);
-  await enqueue({ op_type: 'delete_grading', payload: { id } });
 }
 
 /** Toggle the `is_public` flag on a collection. RLS makes the row visible to
@@ -857,6 +720,10 @@ export async function addItemToCollection(
   card: Card,
   details?: ItemDetails,
   position = 0,
+  // When true, re-adding an identical copy bumps its quantity instead of being a
+  // no-op. Used for the main collection; binders/auto-file keep the no-op dedup
+  // (a binder is a positional arrangement, not a tally of duplicates).
+  incrementIfExists = false,
 ): Promise<MirrorItem | null> {
   const db = await getDb();
   const variantId  = details?.variantId ?? null;
@@ -865,9 +732,15 @@ export async function addItemToCollection(
   const grader     = details?.grader ?? null;
   const grade      = details?.grade ?? null;
   const certNumber = details?.certNumber ?? null;
+  // Number of copies this add contributes (≥1).
+  const addQty     = Math.max(1, Math.floor(details?.quantity ?? 1));
 
-  const existing = await db.getFirstAsync<{ id: string }>(
-    `SELECT id FROM cloud_collection_items
+  const existing = await db.getFirstAsync<{
+    id: string; quantity: number; position: number; card_json: string;
+    added_at: number; acquired_price: number | null; acquired_at: number | null;
+  }>(
+    `SELECT id, quantity, position, card_json, added_at, acquired_price, acquired_at
+       FROM cloud_collection_items
       WHERE collection_id = ? AND card_id = ?
         AND IFNULL(variant_id, '') = IFNULL(?, '')
         AND IFNULL(condition, '')  = IFNULL(?, '')
@@ -875,7 +748,31 @@ export async function addItemToCollection(
         AND IFNULL(grade, '')      = IFNULL(?, '')`,
     [collectionId, card.id, variantId, condition, grader, grade],
   );
-  if (existing) return null; // no-op — identical copy already held
+  if (existing) {
+    if (!incrementIfExists) return null; // no-op — identical copy already held
+    const quantity = (existing.quantity ?? 1) + addQty;
+    await db.runAsync(
+      `UPDATE cloud_collection_items SET quantity = ? WHERE id = ?`,
+      [quantity, existing.id],
+    );
+    // Re-upsert via add_item (keyed on the existing id) so the cloud row's
+    // quantity catches up — last write wins if several stack while offline.
+    await enqueue({
+      op_type: 'add_item',
+      payload: {
+        id: existing.id, collection_id: collectionId, card_id: card.id,
+        position: existing.position, quantity,
+        variant_id: variantId, condition, grader, grade, cert_number: certNumber,
+      },
+    });
+    return {
+      id: existing.id, collection_id: collectionId, card_id: card.id,
+      card_json: existing.card_json, quantity, position: existing.position,
+      added_at: existing.added_at, acquired_price: existing.acquired_price,
+      acquired_at: existing.acquired_at, variant_id: variantId, variant_name: variantName,
+      condition, grader, grade, cert_number: certNumber,
+    };
+  }
 
   const id = uuidv4();
   const now = Date.now();
@@ -886,14 +783,14 @@ export async function addItemToCollection(
      (id, collection_id, card_id, card_json, quantity, position, added_at,
       variant_id, variant_name, condition, grader, grade, cert_number)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, collectionId, card.id, cardJson, 1, position, now,
+    [id, collectionId, card.id, cardJson, addQty, position, now,
      variantId, variantName, condition, grader, grade, certNumber],
   );
 
   await enqueue({
     op_type: 'add_item',
     payload: {
-      id, collection_id: collectionId, card_id: card.id, position,
+      id, collection_id: collectionId, card_id: card.id, position, quantity: addQty,
       variant_id: variantId, condition, grader, grade, cert_number: certNumber,
     },
   });
@@ -903,7 +800,7 @@ export async function addItemToCollection(
     collection_id: collectionId,
     card_id: card.id,
     card_json: cardJson,
-    quantity: 1,
+    quantity: addQty,
     position,
     added_at: now,
     acquired_price: null,
@@ -933,11 +830,42 @@ export async function removeItemFromCollectionByCard(
 }
 
 /** Remove a single copy by its item id. Use when multiple copies of the same
- *  card may be held and only one should be removed. */
+ *  card may be held and only one should be removed. Removes the whole line
+ *  regardless of quantity (the "remove all" path). */
 export async function removeItemById(itemId: string): Promise<void> {
   const db = await getDb();
   await db.runAsync(`DELETE FROM cloud_collection_items WHERE id = ?`, [itemId]);
   await enqueue({ op_type: 'remove_item', payload: { id: itemId } });
+}
+
+/**
+ * Set a copy's quantity. quantity<=0 removes the line entirely. Otherwise the
+ * mirror row is updated and an add_item op (keyed on the existing id) carries
+ * the new count to the cloud — last write wins if several stack offline.
+ */
+export async function setItemQuantity(itemId: string, quantity: number): Promise<void> {
+  if (quantity <= 0) { await removeItemById(itemId); return; }
+  const db = await getDb();
+  const row = await db.getFirstAsync<{
+    collection_id: string; card_id: string; position: number;
+    variant_id: string | null; condition: string | null;
+    grader: string | null; grade: string | null; cert_number: string | null;
+  }>(
+    `SELECT collection_id, card_id, position, variant_id, condition, grader, grade, cert_number
+       FROM cloud_collection_items WHERE id = ?`,
+    [itemId],
+  );
+  if (!row) return;
+  await db.runAsync(`UPDATE cloud_collection_items SET quantity = ? WHERE id = ?`, [quantity, itemId]);
+  await enqueue({
+    op_type: 'add_item',
+    payload: {
+      id: itemId, collection_id: row.collection_id, card_id: row.card_id,
+      position: row.position, quantity,
+      variant_id: row.variant_id, condition: row.condition,
+      grader: row.grader, grade: row.grade, cert_number: row.cert_number,
+    },
+  });
 }
 
 /**
@@ -1376,35 +1304,6 @@ async function applyOpToCloud(opType: string, payload: Record<string, unknown>):
       if (error) throw new Error(error.message);
       return;
     }
-    case 'upsert_grading': {
-      const p = payload as unknown as GradingUpsertPayload;
-      const { error } = await supabase.from('card_grading_submissions').upsert({
-        id:             p.id,
-        user_id:        user.id,
-        card_id:        p.card_id,
-        card_name:      p.card_name,
-        card_set:       p.card_set,
-        grader:         p.grader,
-        submission_id:  p.submission_id,
-        stage:          p.stage,
-        submitted_at:   p.submitted_at,
-        returned_at:    p.returned_at,
-        returned_grade: p.returned_grade,
-        declared_value: p.declared_value,
-        notes:          p.notes,
-      }, { onConflict: 'id' });
-      if (error) throw new Error(error.message);
-      return;
-    }
-    case 'delete_grading': {
-      const p = payload as { id: string };
-      const { error } = await supabase
-        .from('card_grading_submissions')
-        .delete()
-        .eq('id', p.id);
-      if (error) throw new Error(error.message);
-      return;
-    }
     case 'set_collection_rules': {
       const p = payload as { id: string; rules: SmartBinderRules | null };
       const { error } = await supabase
@@ -1415,12 +1314,12 @@ async function applyOpToCloud(opType: string, payload: Record<string, unknown>):
       return;
     }
     case 'add_item': {
-      const p = payload as { id: string; collection_id: string; card_id: string; position?: number; variant_id?: string | null; condition?: string | null; grader?: string | null; grade?: string | null; cert_number?: string | null };
+      const p = payload as { id: string; collection_id: string; card_id: string; quantity?: number; position?: number; variant_id?: string | null; condition?: string | null; grader?: string | null; grade?: string | null; cert_number?: string | null };
       const { error } = await supabase.from('collection_items').upsert({
         id:            p.id,
         collection_id: p.collection_id,
         card_id:       p.card_id,
-        quantity:      1,
+        quantity:      p.quantity ?? 1,
         position:      p.position ?? 0,
         variant_id:    p.variant_id ?? null,
         condition:     p.condition ?? null,
@@ -1490,6 +1389,15 @@ async function applyOpToCloud(opType: string, payload: Record<string, unknown>):
       const { error } = await supabase
         .from('collections')
         .update({ cover_card_ids: p.cover_card_ids })
+        .eq('id', p.id);
+      if (error) throw new Error(error.message);
+      return;
+    }
+    case 'set_collection_tone': {
+      const p = payload as { id: string; tone_start: string; tone_end: string };
+      const { error } = await supabase
+        .from('collections')
+        .update({ tone_start: p.tone_start, tone_end: p.tone_end })
         .eq('id', p.id);
       if (error) throw new Error(error.message);
       return;

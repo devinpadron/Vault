@@ -51,6 +51,7 @@ export const EMPTY_FILTERS: CollectionFilters = {
 export interface CollectionEntry {
   item_id:        string;         // collection_item id — identifies this physical copy
   card:           Card;
+  quantity:       number;         // how many identical copies this row represents
   added_at:       number;
   acquired_price: number | null;  // USD cost basis, null = not set
   acquired_at:    number | null;  // epoch ms acquisition date, null = unknown

@@ -13,6 +13,7 @@ import {
   BinderMediaTransform,
   createCollection,
   deleteCollection,
+  ItemDetails,
   MirrorBinderMedia,
   removeBinderMedia,
   removeItemFromCollectionByCard,
@@ -21,6 +22,7 @@ import {
   setBinderItemPositions,
   setCollectionCover,
   setCollectionRules,
+  setCollectionTone,
   SmartBinderRules,
   updateBinderMedia,
 } from '@/lib/db/cloud-sync';
@@ -435,7 +437,7 @@ export function useUpdateBinderRules() {
 export function useAddCardToBinder() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  return async (binderId: string, card: Card): Promise<void> => {
+  return async (binderId: string, card: Card, details?: ItemDetails): Promise<void> => {
     if (!user) throw new Error('Sign in to add cards.');
     // Find current max position so the new card lands at the end.
     const db = await getDb();
@@ -444,7 +446,7 @@ export function useAddCardToBinder() {
       [binderId],
     );
     const position = (maxRow?.max_pos ?? -1) + 1;
-    await addItemToCollection(binderId, card, undefined, position);
+    await addItemToCollection(binderId, card, details, position);
     queryClient.invalidateQueries({ queryKey: ['binder-cards', user.id, binderId] });
     queryClient.invalidateQueries({ queryKey: ['binder-items', user.id, binderId] });
     queryClient.invalidateQueries({ queryKey: ['binder', user.id, binderId] });
@@ -536,6 +538,18 @@ export function useSetBinderCover() {
   };
 }
 
+/** Recolor a binder's gradient tone (the [start, end] pair behind every page). */
+export function useSetBinderTone() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return async (binderId: string, tone: [string, string]): Promise<void> => {
+    if (!user) throw new Error('Sign in to customize binders.');
+    await setCollectionTone(binderId, tone[0], tone[1]);
+    queryClient.invalidateQueries({ queryKey: ['binder', user.id, binderId] });
+    queryClient.invalidateQueries({ queryKey: ['binders', user.id] });
+  };
+}
+
 /** Binder cards paired with their item id + position, ordered by position. The
  *  drag-reorder layer needs the item ids; useBinderCards stays card-only. */
 export interface BinderItem {
@@ -567,6 +581,20 @@ export function useBinderItems(binderId: string) {
 }
 
 // ─── Binder media (tiles / backgrounds) ──────────────────────────────────────
+
+// A page's solid background colour is stored as a `background` media row whose
+// url is this sentinel + a hex colour (e.g. "color:#1A1530") instead of an
+// uploaded image URL. Lets page colours ride the existing media sync/RLS path
+// with no schema change; renderers branch on this prefix.
+export const PAGE_COLOR_PREFIX = 'color:';
+
+/** The hex colour of a page-colour background media row, or null if it's an
+ *  image background (or not a background). */
+export function pageColorOf(media: { kind: BinderMediaKind; url: string }): string | null {
+  return media.kind === 'background' && media.url.startsWith(PAGE_COLOR_PREFIX)
+    ? media.url.slice(PAGE_COLOR_PREFIX.length)
+    : null;
+}
 
 export interface BinderMediaItem {
   id: string;
@@ -681,6 +709,34 @@ export function useRemoveBinderMedia() {
     queryClient.invalidateQueries({ queryKey: ['binder-media', user.id, binderId] });
     queryClient.invalidateQueries({ queryKey: ['binder', user.id, binderId] });
     queryClient.invalidateQueries({ queryKey: ['binders', user.id] });
+  };
+}
+
+/**
+ * Set (or clear, with `color: null`) a binder page's solid background colour.
+ * A page has at most one background, so any existing background rows on the page
+ * (`replaceMediaIds`) are removed first — page colour and a background photo are
+ * mutually exclusive.
+ */
+export function useSetPageColor() {
+  const addMedia = useAddBinderMedia();
+  const removeMedia = useRemoveBinderMedia();
+  return async (
+    binderId: string,
+    pageNum: number,
+    color: string | null,
+    replaceMediaIds: string[],
+  ): Promise<void> => {
+    for (const id of replaceMediaIds) await removeMedia(binderId, id);
+    if (color) {
+      await addMedia({
+        binderId,
+        pageNum,
+        kind: 'background',
+        cellMask: 0,
+        storageKey: `${PAGE_COLOR_PREFIX}${color}`,
+      });
+    }
   };
 }
 

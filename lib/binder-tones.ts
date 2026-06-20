@@ -11,6 +11,22 @@ export const TONE_PAIRS: [string, string][] = [
   ['#1F0E2A', '#FF7AE0'],
 ];
 
+// Solid colours offered for an individual binder *page* background (distinct
+// from the binder-wide gradient tone above). Stored as a `binder_media`
+// background row whose storage_key is the `color:#RRGGBB` sentinel — see
+// PAGE_COLOR_PREFIX in lib/api/binders.ts. `null` clears the page back to the
+// binder's gradient.
+export const PAGE_COLORS: string[] = [
+  '#1A1530',  // deep indigo
+  '#2A1020',  // wine
+  '#101F2A',  // midnight teal
+  '#10241A',  // forest
+  '#2A2410',  // bronze
+  '#241026',  // plum
+  '#1C1C22',  // graphite
+  '#0E0E12',  // near-black
+];
+
 // Deterministic tone-for-id helper used when we want a stable colour for a
 // collection that has no explicit tone saved (e.g. a friend's public binder
 // surfaced via the read-only collection schema).

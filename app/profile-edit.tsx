@@ -336,7 +336,7 @@ function Header({ onBack }: { onBack: () => void }) {
         <Icon name="chevron-left" size={18} color={Colors.text} />
       </TouchableOpacity>
       <Text style={styles.navTitle}>Edit profile</Text>
-      <View style={styles.navBtn} />
+      <View style={styles.navSpacer} />
     </View>
   );
 }
@@ -366,6 +366,8 @@ const styles = StyleSheet.create({
   },
   navTitle: { fontFamily: FontFamily.display, fontSize: 22, color: Colors.text },
   navBtn: NavButtonStyle,
+  // Invisible spacer to keep the centered title balanced (no empty circle).
+  navSpacer: { width: NavButtonStyle.width },
   saveBtn: {
     paddingHorizontal: 14,
     paddingVertical: 9,

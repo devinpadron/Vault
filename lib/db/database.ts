@@ -53,6 +53,7 @@ const MIGRATIONS: ReadonlyArray<(db: SQLite.SQLiteDatabase) => Promise<void>> = 
   migration2DropLegacyTables,
   migration3BinderMedia,
   migration4BinderCoverCards,
+  migration5DropGradingQueue,
 ];
 
 // v0 → v1: the full mirror schema as it stood when the runner was introduced,
@@ -221,6 +222,13 @@ async function migration3BinderMedia(db: SQLite.SQLiteDatabase): Promise<void> {
 // default to the first two by position). Mirror of collections.cover_card_ids.
 async function migration4BinderCoverCards(db: SQLite.SQLiteDatabase): Promise<void> {
   await addMissingColumns(db, 'cloud_collections', { cover_card_ids: 'TEXT' });
+}
+
+// v4 → v5: the grading-queue feature was removed. Drop its local mirror table
+// (the base schema in migration 1 still creates it on fresh installs; this drop
+// runs immediately after, so new and existing installs converge to no table).
+async function migration5DropGradingQueue(db: SQLite.SQLiteDatabase): Promise<void> {
+  await db.execAsync(`DROP TABLE IF EXISTS cloud_card_grading;`);
 }
 
 async function addMissingColumns(

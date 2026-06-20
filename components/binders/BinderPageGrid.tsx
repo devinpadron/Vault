@@ -13,7 +13,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CardThumb } from '@/components/cards/CardThumb';
 import { Icon } from '@/components/ui/Icon';
-import { BinderMediaItem } from '@/lib/api/binders';
+import { BinderMediaItem, pageColorOf } from '@/lib/api/binders';
 import {
   cellRowCol,
   gridMetrics,
@@ -51,6 +51,7 @@ export const BinderPageGrid = memo(function BinderPageGrid({
   onPressCard, onRemoveCard, onGridLayout,
 }: Props) {
   const m = gridMetrics(screenWidth);
+  const bgColor = background ? pageColorOf(background) : null;
   const isEmpty = cells.every(c => c.kind === 'card' && c.card == null) && !background;
 
   return (
@@ -63,13 +64,17 @@ export const BinderPageGrid = memo(function BinderPageGrid({
           style={StyleSheet.absoluteFill}
         />
         {background && (
-          <Image
-            source={{ uri: background.url }}
-            style={StyleSheet.absoluteFill}
-            contentFit="cover"
-            cachePolicy="memory-disk"
-            recyclingKey={background.id}
-          />
+          bgColor ? (
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: bgColor }]} />
+          ) : (
+            <Image
+              source={{ uri: background.url }}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              recyclingKey={background.id}
+            />
+          )
         )}
 
         {isEmpty ? (

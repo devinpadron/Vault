@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { getDb } from '@/lib/db/database';
@@ -11,31 +11,122 @@ import { Card as AppCard } from '@/types';
 import { SupabaseCardFull, CARD_SELECT, mapRow, FEATURED_RARITIES } from './types';
 import { getCardPricing, CardPricing, PricingQuery } from './pricing';
 import { getCardPopReports, PopReport } from './pop-reports';
-import { refreshCardOnView } from './sync-client';
+import { refreshCardOnView, prewarmCardPricing } from './sync-client';
 
 const TABLE = 'cards';
 
 const PAGE_SIZE = 24;
 const PRICE_SORT_LIMIT = 200;
 
+// A set released within this window counts as "recent" and gets priority as the
+// featured-card source.
+const FEATURED_RECENT_DAYS = 45;
+const WEEK_MS = 1000 * 60 * 60 * 24 * 7;
+
+// Integer index of the current ISO-ish week since the unix epoch. Stable for a
+// whole week, so the featured pick only changes once a week.
+function currentWeekSeed(): number {
+  return Math.floor(Date.now() / WEEK_MS);
+}
+
+// Deterministic index into a pool of size `len` for a given week. Multiplying by
+// a large odd constant before the modulo decorrelates consecutive weeks so the
+// card visibly jumps around the pool instead of marching by one.
+function weeklyIndex(seed: number, len: number): number {
+  const scrambled = Math.abs((seed * 2654435761) % len);
+  return scrambled % len;
+}
+
+// Featured card: a Pokémon (never Trainer/Energy) drawn from the chase rarities.
+// Refreshes once a week. If a set was released in the last FEATURED_RECENT_DAYS,
+// the pick is drawn from that newest set; otherwise from the whole chase pool.
 export function useFeaturedCard() {
+  const week = currentWeekSeed();
   return useQuery<AppCard | null>({
-    queryKey: ['featured-card'],
+    queryKey: ['featured-card', week],
     queryFn: async () => {
+      // 1. Try the most recently released set first. Fetch lightweight id +
+      //    release_date rows for chase-rarity Pokémon from sets newer than the
+      //    cutoff, then narrow to the single newest set in that window.
+      const cutoff = new Date(Date.now() - FEATURED_RECENT_DAYS * 86400000)
+        .toISOString()
+        .slice(0, 10);
+
+      const { data: recent, error: recentErr } = await supabase
+        .from(TABLE)
+        .select('id, expansions!expansion_id!inner(release_date)')
+        .eq('supertype', 'Pokémon')
+        .in('rarity', FEATURED_RARITIES)
+        .gte('expansions.release_date', cutoff);
+
+      if (recentErr) throw new Error(recentErr.message);
+
+      type PoolRow = { id: string; expansions: { release_date: string | null } };
+      let candidateIds: string[] = [];
+
+      const recentRows = (recent ?? []) as unknown as PoolRow[];
+      if (recentRows.length > 0) {
+        const newest = recentRows.reduce<string>(
+          (max, r) => (r.expansions.release_date ?? '') > max ? (r.expansions.release_date ?? '') : max,
+          '',
+        );
+        candidateIds = recentRows
+          .filter(r => (r.expansions.release_date ?? '') === newest)
+          .map(r => r.id);
+      }
+
+      // 2. Fall back to the full chase pool when nothing recent qualifies.
+      if (candidateIds.length === 0) {
+        const { data: pool, error: poolErr } = await supabase
+          .from(TABLE)
+          .select('id')
+          .eq('supertype', 'Pokémon')
+          .in('rarity', FEATURED_RARITIES)
+          .limit(1000);
+        if (poolErr) throw new Error(poolErr.message);
+        candidateIds = ((pool ?? []) as { id: string }[]).map(r => r.id);
+      }
+
+      if (candidateIds.length === 0) return null;
+
+      // 3. Deterministic weekly pick. Sort ids first so the pick is stable
+      //    regardless of row order returned by Postgres.
+      candidateIds.sort();
+      const chosenId = candidateIds[weeklyIndex(week, candidateIds.length)];
+
       const { data, error } = await supabase
         .from(TABLE)
         .select(CARD_SELECT)
-        .in('rarity', FEATURED_RARITIES)
-        .limit(100);
+        .eq('id', chosenId)
+        .maybeSingle();
 
       if (error) throw new Error(error.message);
-      if (!data || data.length === 0) return null;
-
-      const pick = Math.floor(Math.random() * data.length);
-      return mapRow(data[pick] as unknown as SupabaseCardFull, pick);
+      if (!data) return null;
+      return mapRow(data as unknown as SupabaseCardFull);
     },
-    staleTime: 1000 * 60 * 10,
+    // Deterministic per week, so cache hard; the queryKey rolls over weekly.
+    staleTime: WEEK_MS,
+    gcTime: WEEK_MS,
   });
+}
+
+/**
+ * Imperative single-card fetch (non-hook): pulls the full card row by id, caches
+ * it, and returns the app-level Card. Used where a Card is needed outside React
+ * Query's hook flow — e.g. quick-adding a scanner match without leaving the
+ * scanner. Returns null when the id isn't in the catalog.
+ */
+export async function fetchCardById(id: string): Promise<AppCard | null> {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select(CARD_SELECT)
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  const card = mapRow(data as unknown as SupabaseCardFull);
+  await setCachedCard(id, card);
+  return card;
 }
 
 export function useCard(id: string) {
@@ -250,6 +341,51 @@ export function useSearchCount(
   });
 }
 
+// Debounce window for coalescing scroll bursts into one batched prewarm.
+const PREWARM_VISIBLE_DEBOUNCE_MS = 600;
+
+/**
+ * Lazily revalidate prices for whichever cards are currently on screen. This is
+ * the read-time half of the "Supabase is truth, refresh on view if stale" model
+ * for list surfaces (search, collection) — the card-detail screen already does
+ * it per-card via refreshCardOnView.
+ *
+ * Each id is requested at most once per mount, and bursts (e.g. infinite-scroll
+ * loading a page) are debounced into a single batched `prewarm` call. The edge
+ * function TTL-gates every id server-side, so already-fresh cards cost nothing
+ * and only stale ones hit Scrydex + get stored. `onRefreshed` fires only when a
+ * batch actually refreshed something, so the caller can invalidate and re-read.
+ */
+export function usePrewarmVisiblePricing(cardIds: string[], onRefreshed?: () => void) {
+  const requested = useRef<Set<string>>(new Set());
+  const pending = useRef<Set<string>>(new Set());
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cbRef = useRef(onRefreshed);
+  cbRef.current = onRefreshed;
+
+  useEffect(() => {
+    let added = false;
+    for (const id of cardIds) {
+      if (!id || requested.current.has(id)) continue;
+      requested.current.add(id);
+      pending.current.add(id);
+      added = true;
+    }
+    if (!added) return;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      const batch = Array.from(pending.current);
+      pending.current.clear();
+      if (batch.length === 0) return;
+      prewarmCardPricing(batch)
+        .then(res => { if (res && res.refreshed > 0) cbRef.current?.(); })
+        .catch(err => { if (__DEV__) console.warn('[prewarm-visible] failed:', err); });
+    }, PREWARM_VISIBLE_DEBOUNCE_MS);
+    return () => { if (timer.current) clearTimeout(timer.current); };
+  }, [cardIds]);
+}
+
 export function useSearchCards(
   query: string,
   filter = 'All',
@@ -260,9 +396,11 @@ export function useSearchCards(
     () => parseSearchQuery(query, filter, expansionNames),
     [query, filter, expansionNames],
   );
+  const queryClient = useQueryClient();
+  const searchKey = ['search', parsed.key, sort.field, sort.dir];
 
-  return useInfiniteQuery<AppCard[]>({
-    queryKey: ['search', parsed.key, sort.field, sort.dir],
+  const result = useInfiniteQuery<AppCard[]>({
+    queryKey: searchKey,
     queryFn: async ({ pageParam }) => {
       const page = pageParam as number;
 
@@ -296,6 +434,18 @@ export function useSearchCards(
     enabled: query.trim().length >= 2,
     staleTime: 1000 * 60 * 10,
   });
+
+  // Revalidate the prices of cards shown in the results: stale ones refresh
+  // server-side, then we re-run the search so the join picks up fresh values.
+  const visibleIds = useMemo(
+    () => (result.data?.pages.flat() ?? []).map(c => c.id),
+    [result.data],
+  );
+  usePrewarmVisiblePricing(visibleIds, () => {
+    queryClient.invalidateQueries({ queryKey: searchKey });
+  });
+
+  return result;
 }
 
 // Aggregated daily total of the user's collection over time, expressed as a
@@ -318,20 +468,23 @@ export function usePortfolioHistory(range: PortfolioRange = '30D') {
     queryKey: ['portfolio-history', user?.id, range],
     enabled: !!user?.id,
     queryFn: async () => {
-      // 1. Local collection (cloud mirror, kind='collection')
+      // 1. Local collection (cloud mirror, kind='collection'). Sum quantity per
+      // card so the chart weights each holding by how many copies are held.
       const db = await getDb();
-      const rows = await db.getAllAsync<{ card_id: string }>(
-        `SELECT DISTINCT i.card_id
+      const rows = await db.getAllAsync<{ card_id: string; qty: number }>(
+        `SELECT i.card_id, SUM(i.quantity) AS qty
            FROM cloud_collection_items i
            JOIN cloud_collections c ON c.id = i.collection_id
-          WHERE c.user_id = ? AND c.kind = 'collection'`,
+          WHERE c.user_id = ? AND c.kind = 'collection'
+          GROUP BY i.card_id`,
         [user!.id],
       );
       const cardIds = rows.map(r => r.card_id);
       if (cardIds.length === 0) return [];
+      const qtys = rows.map(r => Number(r.qty) || 1);
 
-      // 2. One RPC round trip: variant resolution, history join, and
-      // forward-fill all happen server-side (migration 024).
+      // 2. One RPC round trip: variant resolution, history join, quantity
+      // weighting, and forward-fill all happen server-side (migrations 024/028).
       const days = RANGE_CUTOFF_DAYS[range];
       const cutoffDate =
         days != null
@@ -341,6 +494,7 @@ export function usePortfolioHistory(range: PortfolioRange = '30D') {
       const { data, error } = await supabase.rpc('portfolio_history', {
         card_ids: cardIds,
         cutoff: cutoffDate,
+        qtys,
       });
       if (error) throw new Error(`portfolio history: ${error.message}`);
 

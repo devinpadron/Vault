@@ -65,10 +65,14 @@ export const FOIL_RARITIES = new Set([
   'ACE SPEC Rare',
 ]);
 
+// Chase rarities a featured card is drawn from. Values match the catalog's
+// actual `rarity` strings (the "Attack Rare" chase = 'Mega Attack Rare').
 export const FEATURED_RARITIES = [
+  'Illustration Rare',
   'Special Illustration Rare',
   'Hyper Rare',
-  'Illustration Rare',
+  'Mega Hyper Rare',
+  'Mega Attack Rare',
 ] as const;
 
 // Canonical rarity list for the smart-binder rule editor, so users can pick

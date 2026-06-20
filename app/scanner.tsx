@@ -3,14 +3,17 @@ import { Colors, FontFamily, Radius, Spacing } from "@/constants/theme";
 import {
   VisionAnalysis,
   VisionMatch,
+  VisionMatchCard,
   confidenceLabel,
   identifyCardFromImage,
 } from "@/lib/api/vision";
+import { fetchCardById } from "@/lib/api/cards";
+import { useAddToCollection } from "@/lib/db/collection";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   ScrollView,
@@ -47,8 +50,11 @@ type IdentifyState =
   | { kind: "no-match" }
   | { kind: "error"; message: string };
 
-const RETICLE_W = 240;
-const RETICLE_H = 336;
+// Card-aspect (1 : 1.4) framing guide. Sized generously so a card fills the
+// frame from a comfortable distance instead of needing to be right up against
+// the lens.
+const RETICLE_W = 310;
+const RETICLE_H = 434;
 
 // Anything below this is treated as "no usable match" — surfacing a 0.4 score
 // to the user would be more confusing than helpful.
@@ -62,6 +68,21 @@ export default function ScannerScreen() {
   const [identify, setIdentify] = useState<IdentifyState>({ kind: "idle" });
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView | null>(null);
+
+  const addToCollection = useAddToCollection();
+  // Quick-add: drop a matched card into the collection and immediately return to
+  // scanning, so the user can rip through a stack without leaving the camera.
+  const [adding, setAdding] = useState(false);
+  const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const showToast = useCallback((text: string, error = false) => {
+    setToast({ text, error });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2200);
+  }, []);
+
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
 
   // Auto-request permission on first mount. If the user previously denied it,
   // they can re-grant via the in-screen button below.
@@ -134,6 +155,34 @@ export default function ScannerScreen() {
     setIdentify({ kind: "idle" });
     setPhase("scanning");
   }
+
+  const handleQuickAdd = useCallback(
+    async (match: VisionMatchCard) => {
+      if (adding) return;
+      setAdding(true);
+      try {
+        // The vision payload is a brief card shape; hydrate the full row so the
+        // collection mirror stores real art / value, not a placeholder.
+        const full = await fetchCardById(match.id);
+        if (!full) throw new Error("not in catalog");
+        await addToCollection(full);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        showToast(`Added ${full.name}`);
+        // Straight back to scanning for the next card.
+        setCapturedUri(null);
+        setIdentify({ kind: "idle" });
+        setPhase("scanning");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "add failed";
+        if (__DEV__) console.warn("[scanner] quick-add failed:", err);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        showToast(`Couldn't add — ${message}`, true);
+      } finally {
+        setAdding(false);
+      }
+    },
+    [adding, addToCollection, showToast],
+  );
 
   function handleSearch() {
     // Replace so back from /search returns to the tabs, not to a stale
@@ -275,6 +324,31 @@ export default function ScannerScreen() {
         )}
       </View>
 
+      {/* Quick-add confirmation toast */}
+      {toast && (
+        <Animated.View
+          entering={FadeInUp.duration(200)}
+          style={[
+            styles.toast,
+            toast.error && styles.toastError,
+            { bottom: insets.bottom + 120 },
+          ]}
+          pointerEvents="none"
+        >
+          <Icon
+            name={toast.error ? "close" : "check"}
+            size={14}
+            color={toast.error ? Colors.text : "#0A0A0C"}
+          />
+          <Text
+            style={[styles.toastText, toast.error && styles.toastTextError]}
+            numberOfLines={1}
+          >
+            {toast.text}
+          </Text>
+        </Animated.View>
+      )}
+
       {/* Bottom */}
       {phase === "scanning" ? (
         <View style={[styles.scanBottom, { paddingBottom: insets.bottom + 24 }]}>
@@ -305,7 +379,9 @@ export default function ScannerScreen() {
             <ResultMatched
               matches={identify.matches}
               analysis={identify.analysis}
+              adding={adding}
               onOpen={handleOpenMatch}
+              onQuickAdd={handleQuickAdd}
               onRetake={handleRetake}
               onSearch={handleSearch}
             />
@@ -348,13 +424,17 @@ function ResultLoading() {
 function ResultMatched({
   matches,
   analysis,
+  adding,
   onOpen,
+  onQuickAdd,
   onRetake,
   onSearch,
 }: {
   matches: VisionMatch[];
   analysis: VisionAnalysis | null;
+  adding: boolean;
   onOpen: (id: string) => void;
+  onQuickAdd: (card: VisionMatchCard) => void;
   onRetake: () => void;
   onSearch: () => void;
 }) {
@@ -449,6 +529,24 @@ function ResultMatched({
           </ScrollView>
         </>
       )}
+
+      <TouchableOpacity
+        style={[styles.addBtn, adding && styles.addBtnDisabled]}
+        onPress={() => onQuickAdd(top.card)}
+        disabled={adding}
+        accessibilityLabel={`Add ${top.card.name} to collection and keep scanning`}
+        accessibilityRole="button"
+        activeOpacity={0.85}
+      >
+        {adding ? (
+          <ActivityIndicator color="#0A0A0C" />
+        ) : (
+          <>
+            <Icon name="plus" size={16} color="#0A0A0C" />
+            <Text style={styles.addBtnText}>Add & keep scanning</Text>
+          </>
+        )}
+      </TouchableOpacity>
 
       <View style={styles.resultCtaRow}>
         <TouchableOpacity
@@ -824,6 +922,55 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     fontSize: 9,
     color: Colors.text3,
+  },
+  addBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 15,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.gold,
+    marginTop: 4,
+  },
+  addBtnDisabled: {
+    opacity: 0.7,
+  },
+  addBtnText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 15,
+    color: "#0A0A0C",
+  },
+  toast: {
+    position: "absolute",
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.gold,
+    maxWidth: "86%",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 14,
+    elevation: 8,
+  },
+  toastError: {
+    backgroundColor: Colors.elevated,
+    borderWidth: 1,
+    borderColor: Colors.down,
+  },
+  toastText: {
+    fontFamily: FontFamily.bodySemi,
+    fontSize: 13,
+    color: "#0A0A0C",
+    flexShrink: 1,
+  },
+  toastTextError: {
+    color: Colors.text,
   },
   resultCtaRow: {
     flexDirection: "row",

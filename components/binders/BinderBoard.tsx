@@ -89,7 +89,10 @@ export function BinderBoard({
     () => items.reduce((mx, it) => Math.max(mx, it.position), -1),
     [items],
   );
-  const pageCount = binderPageCount(maxCardSlot, byPage.maxPage);
+  // In edit mode, render one extra empty page past the content so a card can be
+  // dragged to the screen edge, flipped onto the new page, and dropped to create
+  // it — mirroring iPhone home-screen behavior. Must match the parent's count.
+  const pageCount = binderPageCount(maxCardSlot, byPage.maxPage) + (editing ? 1 : 0);
 
   // Each page's 9 cells resolved to a tile slice, the card sitting in that exact
   // slot, or an empty sleeve.

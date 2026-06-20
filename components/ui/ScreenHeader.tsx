@@ -38,7 +38,7 @@ export function ScreenHeader({ title, onBack, right, topInset = true }: Props) {
         <Icon name="chevron-left" size={18} color={Colors.text} />
       </TouchableOpacity>
       <Text style={styles.title} numberOfLines={1}>{title}</Text>
-      {right ?? <View style={styles.btn} />}
+      {right ?? <View style={styles.spacer} />}
     </View>
   );
 }
@@ -60,4 +60,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   btn: NavButtonStyle,
+  // Invisible right-side spacer: keeps the centered title balanced against the
+  // back button without drawing an empty nav-button circle.
+  spacer: { width: NavButtonStyle.width },
 });

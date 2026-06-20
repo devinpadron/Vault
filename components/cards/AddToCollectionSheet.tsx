@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GradedOption } from '@/lib/api/pricing';
+import { useCardPricing } from '@/lib/api/cards';
 import { ItemDetails } from '@/lib/db/cloud-sync';
 import { CONDITIONS, GRADERS, GRADES } from '@/lib/grading/constants';
 import { fmt } from '@/lib/format';
@@ -51,9 +52,16 @@ export function AddToCollectionSheet({ visible, card, gradedOptions, onClose, on
   const [grader, setGrader]       = useState<string>('PSA');
   const [grade, setGrade]         = useState<string>('10');
   const [cert, setCert]           = useState('');
+  const [quantity, setQuantity]   = useState(1);
   const [busy, setBusy]           = useState(false);
 
   const selVariant = variantOptions.find(v => v.id === variantId) ?? variantOptions[0];
+
+  // Live raw price for the exact printing + condition, so a non-NM pick (LP, MP,
+  // …) shows that condition's market — not the flat NM price. Skipped while
+  // graded (graded value comes from gradedOptions). Falls back to the variant's
+  // NM price until the per-condition query resolves.
+  const { data: rawPricing } = useCardPricing(graded ? undefined : card, selVariant?.id, { condition });
 
   // Effective market value for the current selection.
   const gradedMarket = useMemo(() => {
@@ -64,7 +72,9 @@ export function AddToCollectionSheet({ visible, card, gradedOptions, onClose, on
     return hit?.market ?? null;
   }, [graded, gradedOptions, selVariant, grader, grade]);
 
-  const effectiveValue = graded ? gradedMarket : (selVariant?.price ?? null);
+  const effectiveValue = graded
+    ? gradedMarket
+    : (rawPricing?.price_usd ?? selVariant?.price ?? null);
 
   async function handleAdd() {
     if (busy) return;
@@ -78,8 +88,10 @@ export function AddToCollectionSheet({ visible, card, gradedOptions, onClose, on
         grade:       graded ? grade : null,
         certNumber:  graded && cert.trim() ? cert.trim() : null,
         value:       effectiveValue,
+        quantity,
       });
       haptic('success');
+      setQuantity(1);
       onClose();
     } finally {
       setBusy(false);
@@ -152,6 +164,40 @@ export function AddToCollectionSheet({ visible, card, gradedOptions, onClose, on
                 </View>
               </>
             )}
+
+            {/* Quantity — tap the number to type a value, or use the steppers. */}
+            <Text style={styles.label}>Quantity</Text>
+            <View style={styles.qtyRow}>
+              <TouchableOpacity
+                style={styles.qtyBtn}
+                onPress={() => setQuantity(q => Math.max(1, q - 1))}
+                accessibilityRole="button"
+                accessibilityLabel="Decrease quantity"
+              >
+                <Text style={styles.qtyBtnText}>−</Text>
+              </TouchableOpacity>
+              <TextInput
+                style={styles.qtyInput}
+                value={String(quantity)}
+                onChangeText={t => {
+                  const n = parseInt(t.replace(/[^0-9]/g, ''), 10);
+                  setQuantity(Number.isFinite(n) && n > 0 ? Math.min(n, 999) : 1);
+                }}
+                keyboardType="number-pad"
+                selectTextOnFocus
+                returnKeyType="done"
+                maxLength={3}
+                accessibilityLabel="Quantity"
+              />
+              <TouchableOpacity
+                style={styles.qtyBtn}
+                onPress={() => setQuantity(q => Math.min(999, q + 1))}
+                accessibilityRole="button"
+                accessibilityLabel="Increase quantity"
+              >
+                <Text style={styles.qtyBtnText}>+</Text>
+              </TouchableOpacity>
+            </View>
 
             {/* Graded toggle */}
             <View style={styles.toggleRow}>
@@ -229,7 +275,9 @@ export function AddToCollectionSheet({ visible, card, gradedOptions, onClose, on
             accessibilityRole="button"
             accessibilityLabel="Add this copy to collection"
           >
-            <Text style={styles.addBtnText}>Add to collection</Text>
+            <Text style={styles.addBtnText}>
+              {quantity > 1 ? `Add ${quantity} to collection` : 'Add to collection'}
+            </Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -285,6 +333,31 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
   },
   pillActive: { borderColor: Colors.gold, backgroundColor: Colors.goldTint },
+  qtyRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.sm },
+  qtyBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qtyBtnText: { fontFamily: FontFamily.bodySemi, fontSize: 20, lineHeight: 22, color: Colors.text },
+  qtyInput: {
+    minWidth: 64,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    backgroundColor: Colors.surface,
+    fontFamily: FontFamily.monoMed,
+    fontSize: 18,
+    color: Colors.text,
+    textAlign: 'center',
+  },
   pillText: { fontFamily: FontFamily.bodySemi, fontSize: 13, color: Colors.text2 },
   pillTextActive: { color: Colors.gold },
   toggleRow: {

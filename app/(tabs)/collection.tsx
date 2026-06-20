@@ -7,14 +7,15 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Card3D } from '@/components/cards/Card3D';
 import { SkeletonCardCell } from '@/components/ui/SkeletonCard';
 import { Icon } from '@/components/ui/Icon';
+import { AnimatedPrice } from '@/components/ui/AnimatedPrice';
 import { ActiveFilterChips } from '@/components/ui/ActiveFilterChips';
 import { FilterSheet, FilterTriggerButton } from '@/components/ui/FilterSheet';
 import {
-  useCollectionEntries,
+  useLiveCollectionEntries,
   usePortfolioSummary,
   useCollectionVisibility,
   useSetCollectionVisibility,
-  useRemoveFromCollection,
+  useRemoveItem,
 } from '@/lib/db/collection';
 import { useBinders, useAddCardToBinder } from '@/lib/api/binders';
 import { useFailedOpsCount, useRetryFailedOps, useDiscardFailedOps } from '@/lib/db/sync-status';
@@ -55,7 +56,9 @@ function PortfolioSummaryCard({
     <View style={styles.portfolioCard}>
       <View style={styles.portfolioMain}>
         <Text style={styles.portfolioLabel}>CURRENT VALUE</Text>
-        <Text style={styles.portfolioValue}>${fmt(currentValue)}</Text>
+        <Text style={styles.portfolioValue}>
+          $<AnimatedPrice value={currentValue} style={styles.portfolioValue} baseColor={Colors.gold} />
+        </Text>
       </View>
       <View style={styles.portfolioStats}>
         <View style={styles.portfolioStat}>
@@ -197,16 +200,17 @@ function BulkActionBar({
 }
 
 interface CardCellProps {
+  itemId: string;
   card: Card;
   badge?: string | null;
   index: number;
   selected: boolean;
   selectionMode: boolean;
-  onPress: (card: Card) => void;
-  onLongPress: (card: Card) => void;
+  onPress: (itemId: string, card: Card) => void;
+  onLongPress: (itemId: string, card: Card) => void;
 }
 
-const CardCell = memo(function CardCell({ card, badge, index, selected, selectionMode, onPress, onLongPress }: CardCellProps) {
+const CardCell = memo(function CardCell({ itemId, card, badge, index, selected, selectionMode, onPress, onLongPress }: CardCellProps) {
   return (
     <Animated.View
       entering={FadeInDown.delay(index * 20).duration(280)}
@@ -216,8 +220,8 @@ const CardCell = memo(function CardCell({ card, badge, index, selected, selectio
         <Card3D
           card={card}
           width={158}
-          onPress={() => onPress(card)}
-          onLongPress={() => onLongPress(card)}
+          onPress={() => onPress(itemId, card)}
+          onLongPress={() => onLongPress(itemId, card)}
         />
         {selectionMode && (
           <View
@@ -246,7 +250,9 @@ const CardCell = memo(function CardCell({ card, badge, index, selected, selectio
         <View style={styles.priceRow}>
           {card.value > 0 ? (
             <>
-              <Text style={styles.price}>${fmt(card.value)}</Text>
+              <Text style={styles.price}>
+                $<AnimatedPrice value={card.value} style={styles.price} baseColor={Colors.gold} countUp={false} />
+              </Text>
               {card.trend30d != null && card.trend30d !== 0 && (
                 <Text style={[styles.trend, { color: card.trend30d > 0 ? Colors.up : Colors.down }]}>
                   {card.trend30d > 0 ? '↑' : '↓'}{Math.abs(card.trend30d).toFixed(1)}%
@@ -269,14 +275,14 @@ export default function CollectionScreen() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
   const insets = useSafeAreaInsets();
-  const { data: entries = [], isLoading } = useCollectionEntries();
+  const { data: entries = [], isLoading } = useLiveCollectionEntries();
   const portfolio = usePortfolioSummary();
   const { data: setRows = [], isLoading: setsLoading } = useSetCompletion();
   const { data: visibility } = useCollectionVisibility('collection');
   const setVisibility = useSetCollectionVisibility();
   const { data: binderList = [] } = useBinders();
   const addToBinder = useAddCardToBinder();
-  const removeFromCollection = useRemoveFromCollection();
+  const removeItem = useRemoveItem();
   const { mirrorSync, retryMirrorSync } = useAuth();
   const { data: failedOps = 0 } = useFailedOpsCount();
   const retryFailedOps = useRetryFailedOps();
@@ -302,12 +308,14 @@ export default function CollectionScreen() {
   const [binderPickerOpen, setBinderPickerOpen] = useState(false);
   const selectionMode = selectedIds.size > 0;
 
-  const handleCardPress = useCallback((card: Card) => {
+  // Selection is keyed on item_id (the physical copy), not card_id — otherwise
+  // selecting one copy would select every copy that shares the same card.
+  const handleCardPress = useCallback((itemId: string, card: Card) => {
     if (selectionMode) {
       setSelectedIds(prev => {
         const next = new Set(prev);
-        if (next.has(card.id)) next.delete(card.id);
-        else next.add(card.id);
+        if (next.has(itemId)) next.delete(itemId);
+        else next.add(itemId);
         return next;
       });
     } else {
@@ -315,10 +323,10 @@ export default function CollectionScreen() {
     }
   }, [selectionMode]);
 
-  const handleCardLongPress = useCallback((card: Card) => {
+  const handleCardLongPress = useCallback((itemId: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
-      next.add(card.id);
+      next.add(itemId);
       return next;
     });
   }, []);
@@ -326,12 +334,12 @@ export default function CollectionScreen() {
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
   async function handleBulkMoveToBinder(binderId: string) {
-    const ids = Array.from(selectedIds);
-    const cardsById = new Map(entries.map(e => [e.card.id, e.card]));
+    const itemIds = Array.from(selectedIds);
+    const cardByItem = new Map(entries.map(e => [e.item_id, e.card]));
     setBinderPickerOpen(false);
     let added = 0;
-    for (const id of ids) {
-      const card = cardsById.get(id);
+    for (const itemId of itemIds) {
+      const card = cardByItem.get(itemId);
       if (!card) continue;
       try {
         await addToBinder(binderId, card);
@@ -353,9 +361,12 @@ export default function CollectionScreen() {
           text: 'Remove',
           style: 'destructive',
           onPress: async () => {
-            const ids = Array.from(selectedIds);
-            for (const id of ids) {
-              try { await removeFromCollection(id); } catch { /* swallow */ }
+            const itemIds = Array.from(selectedIds);
+            const cardByItem = new Map(entries.map(e => [e.item_id, e.card]));
+            for (const itemId of itemIds) {
+              const card = cardByItem.get(itemId);
+              if (!card) continue;
+              try { await removeItem(itemId, card.id); } catch { /* swallow */ }
             }
             clearSelection();
           },
@@ -367,7 +378,12 @@ export default function CollectionScreen() {
   const visible = useMemo(() => applyFilters(entries, filters), [entries, filters]);
   const cards   = useMemo(() => visible.map(e => e.card), [visible]);
   const cells   = useMemo<CellItem[]>(
-    () => visible.map(e => ({ key: e.item_id, card: e.card, badge: copyLabel(e) })),
+    () => visible.map(e => {
+      // Tile badge = printing/condition label, with a ×N count when >1 copy.
+      const qty = e.quantity > 1 ? `×${e.quantity}` : '';
+      const badge = [copyLabel(e), qty].filter(Boolean).join(' · ') || null;
+      return { key: e.item_id, card: e.card, badge };
+    }),
     [visible],
   );
 
@@ -578,20 +594,22 @@ export default function CollectionScreen() {
           return (
             <View style={styles.row}>
               <CardCell
+                itemId={left.key}
                 card={left.card}
                 badge={left.badge}
                 index={item.index * 2}
-                selected={selectedIds.has(left.card.id)}
+                selected={selectedIds.has(left.key)}
                 selectionMode={selectionMode}
                 onPress={handleCardPress}
                 onLongPress={handleCardLongPress}
               />
               {right ? (
                 <CardCell
+                  itemId={right.key}
                   card={right.card}
                   badge={right.badge}
                   index={item.index * 2 + 1}
-                  selected={selectedIds.has(right.card.id)}
+                  selected={selectedIds.has(right.key)}
                   selectionMode={selectionMode}
                   onPress={handleCardPress}
                   onLongPress={handleCardLongPress}

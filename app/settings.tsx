@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
@@ -116,23 +115,6 @@ export default function SettingsScreen() {
             {user.email && <Text style={styles.email}>{user.email}</Text>}
           </View>
         )}
-
-        {/* Collection tools */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Collection tools</Text>
-          <TouchableOpacity
-            style={styles.row}
-            onPress={() => router.push('/grading' as never)}
-            accessibilityRole="button"
-          >
-            <Icon name="star" size={18} color={Colors.gold} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>Grading queue</Text>
-              <Text style={styles.rowHint}>PSA, CGC, BGS submissions</Text>
-            </View>
-            <Icon name="chevron-right" size={16} color={Colors.text3} />
-          </TouchableOpacity>
-        </View>
 
         {/* Data section */}
         <View style={styles.section}>

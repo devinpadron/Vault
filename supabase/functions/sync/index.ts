@@ -9,6 +9,7 @@
 //   card-on-view         — lazy refresh: prices + history append for ONE card
 //   prewarm              — same as card-on-view, fanned out over many card ids
 //   cron-cards-refresh   — weekly orchestrator: re-syncs every stale expansion
+//   cron-sync-new-expansions — weekly: discovers + syncs newly-released sets only
 //   cron-news-refresh    — hourly: pulls all 5 news feeds, upserts news_items
 //
 // Every invocation logs a row to sync_log. Chain page-based phases by
@@ -29,6 +30,7 @@ import { syncListings } from './phases/listings.ts';
 import { refreshCardOnView } from './phases/onview.ts';
 import { prewarmCards } from './phases/prewarm.ts';
 import { cronRefreshStaleCards } from './phases/cron-cards.ts';
+import { cronSyncNewExpansions } from './phases/cron-new-expansions.ts';
 import { refreshNews } from './phases/news.ts';
 
 const CORS = {
@@ -159,6 +161,10 @@ Deno.serve(async (req: Request) => {
 
     } else if (phase === 'cron-cards-refresh') {
       result = await cronRefreshStaleCards(supabase, scrydex);
+      await finishLog('success', (result as { cardsUpserted: number }).cardsUpserted);
+
+    } else if (phase === 'cron-sync-new-expansions') {
+      result = await cronSyncNewExpansions(supabase, scrydex);
       await finishLog('success', (result as { cardsUpserted: number }).cardsUpserted);
 
     } else if (phase === 'cron-news-refresh') {

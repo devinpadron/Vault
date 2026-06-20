@@ -7,6 +7,8 @@ import { toneFor } from '@/lib/binder-tones';
 import { PLACEHOLDER_CARD } from '@/lib/placeholder-card';
 import { Profile } from './profiles';
 import { CARD_SELECT, SupabaseCardFull, mapRow } from './types';
+import type { BinderItem, BinderMediaItem } from './binders';
+import type { BinderMediaKind, BinderMediaTransform } from '@/lib/db/cloud-sync';
 import { Friend, Binder, Card } from '@/types';
 
 // All friends data is sourced from Supabase tables `profiles` and
@@ -253,6 +255,65 @@ export function useFriendBinderCards(binderId: string) {
       return ((data ?? []) as unknown as Row[])
         .filter(r => r.cards !== null)
         .map((r, i) => mapRow(r.cards as SupabaseCardFull, i));
+    },
+  });
+}
+
+// Like useBinderItems, but for a friend's public binder: carries each card's
+// real slot `position` (not a dense index) so the board renders cards in the
+// exact cells the owner arranged them — keeping them aligned with photo tiles.
+export function useFriendBinderItems(binderId: string) {
+  return useQuery<BinderItem[]>({
+    queryKey: ['friend-binder-items', binderId],
+    enabled: !!binderId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('collection_items')
+        .select(`id, position, cards!card_id(${CARD_SELECT})`)
+        .eq('collection_id', binderId)
+        .order('position', { ascending: true });
+      if (error) throw error;
+      type Row = { id: string; position: number; cards: SupabaseCardFull | null };
+      return ((data ?? []) as unknown as Row[])
+        .filter(r => r.cards !== null)
+        .map(r => ({
+          itemId: r.id,
+          position: r.position,
+          card: mapRow(r.cards as SupabaseCardFull),
+        }));
+    },
+  });
+}
+
+// A friend's binder photo tiles / backgrounds, read straight from Supabase.
+// RLS exposes binder_media whenever the parent binder is public, so a shared
+// binder shows the owner's artwork to everyone — not just the uploader (whose
+// local SQLite mirror is the only thing useBinderMedia can see).
+export function useFriendBinderMedia(binderId: string) {
+  return useQuery<BinderMediaItem[]>({
+    queryKey: ['friend-binder-media', binderId],
+    enabled: !!binderId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('binder_media')
+        .select('id, binder_id, page_num, kind, cell_mask, storage_key, transform')
+        .eq('binder_id', binderId)
+        .order('page_num', { ascending: true })
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      type Row = {
+        id: string; binder_id: string; page_num: number; kind: string;
+        cell_mask: number; storage_key: string; transform: BinderMediaTransform | null;
+      };
+      return ((data ?? []) as Row[]).map(r => ({
+        id: r.id,
+        binderId: r.binder_id,
+        pageNum: r.page_num,
+        kind: (r.kind === 'background' ? 'background' : 'tile') as BinderMediaKind,
+        cellMask: r.cell_mask,
+        url: r.storage_key,
+        transform: r.transform ?? null,
+      }));
     },
   });
 }
