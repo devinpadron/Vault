@@ -101,8 +101,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await pullCollectionsFromCloud(uid);
       await ensureDefaultCollections(uid);
       await flushPendingOps();
-      // prewarm is best-effort — failure here shouldn't flip mirrorSync to
-      // 'error' since the mirror itself is fine.
+      // Mirror is now populated — invalidate all cached queries so the UI
+      // refetches from the freshly-loaded SQLite mirror instead of keeping
+      // the empty results from queries that ran before the pull completed.
+      queryClient.invalidateQueries();
       lastPrewarmAt.current = Date.now();
       prewarmFromLocalCollection().catch(err => {
         if (__DEV__) console.warn('[auth] prewarm failed:', err);
